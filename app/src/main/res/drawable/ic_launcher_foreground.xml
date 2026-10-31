@@ -1,0 +1,20 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- fiber path -->
+    <path
+        android:strokeColor="#FFB74D"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M28,76 L44,64 L64,70 L80,56" />
+    <path android:fillColor="#FFB74D" android:pathData="M28,76m-4,0a4,4 0,1 1,8 0a4,4 0,1 1,-8 0" />
+    <path android:fillColor="#FFB74D" android:pathData="M80,56m-4,0a4,4 0,1 1,8 0a4,4 0,1 1,-8 0" />
+    <!-- map pin -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,24C44.06,24 36,32.06 36,42C36,55.5 54,74 54,74C54,74 72,55.5 72,42C72,32.06 63.94,24 54,24Z" />
+    <path android:fillColor="#0D47A1" android:pathData="M54,42m-7,0a7,7 0,1 1,14 0a7,7 0,1 1,-14 0" />
+</vector>

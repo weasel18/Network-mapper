@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Network Mapper</string>
+    <string name="survey_channel_name">Wi-Fi survey</string>
+</resources>
