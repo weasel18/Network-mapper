@@ -36,6 +36,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -55,6 +56,7 @@ import com.networkmapper.app.data.ASSET_STATUSES
 import com.networkmapper.app.data.Asset
 import com.networkmapper.app.data.AssetType
 import com.networkmapper.app.data.Photo
+import com.networkmapper.app.ui.ApCandidate
 import com.networkmapper.app.ui.MainViewModel
 import com.networkmapper.app.ui.components.AttributesEditor
 import com.networkmapper.app.ui.components.ConfirmDialog
@@ -64,6 +66,9 @@ import com.networkmapper.app.ui.components.TypeBadge
 import com.networkmapper.app.ui.components.rememberGalleryImport
 import com.networkmapper.app.ui.components.rememberPhotoCapture
 import com.networkmapper.app.util.Geo
+import com.networkmapper.app.util.Wifi
+import com.networkmapper.app.wifi.WifiScanner
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -98,6 +103,32 @@ data class AssetForm(
             attributes = a.attributes,
         )
     }
+}
+
+/**
+ * Fills an AP-type pin's form from a chosen radio and its sibling radios: MAC / BSSID list,
+ * SSID(s), channel(s) or frequency, and your saved AP name (only replacing an automatic pin name).
+ */
+internal fun fillFromAp(
+    form: AssetForm,
+    bssidField: String,
+    chosen: ApCandidate,
+    radios: List<ApCandidate>,
+    isDefaultName: (AssetType, String) -> Boolean,
+): AssetForm {
+    val attrs = LinkedHashMap(form.attributes)
+    attrs[bssidField] = radios.map { it.bssid }.distinct().sorted().joinToString(", ")
+    val fields = form.type.suggestedFields
+    val ssids = radios.map { it.ssid }.filter { it.isNotBlank() }.distinct()
+    if ("SSID" in fields && ssids.isNotEmpty()) attrs["SSID"] = ssids.joinToString(", ")
+    val tuned = radios.filter { it.frequency > 0 }.distinctBy { Wifi.channel(it.frequency) to Wifi.band(it.frequency) }
+    if ("Channel" in fields && tuned.isNotEmpty()) {
+        attrs["Channel"] = tuned.sortedBy { it.frequency }.joinToString(", ") { "${Wifi.channel(it.frequency)} (${Wifi.band(it.frequency)})" }
+    }
+    if ("Frequency" in fields && chosen.frequency > 0) attrs["Frequency"] = "${chosen.frequency} MHz"
+    val saved = chosen.savedName ?: radios.firstNotNullOfOrNull { it.savedName }
+    val name = if (saved != null && isDefaultName(form.type, form.name)) saved else form.name
+    return form.copy(attributes = attrs, name = name)
 }
 
 class AssetEditViewModel(app: Application, handle: SavedStateHandle) : AndroidViewModel(app) {
@@ -255,6 +286,44 @@ fun AssetEditScreen(
                     optionLabel = { it.label },
                     onSelect = { t -> vm.update { it.copy(type = t) } },
                     modifier = Modifier.weight(1f),
+                )
+            }
+            val bssidField = f.type.bssidField
+            if (bssidField != null) {
+                // Pre-fill AP / bridge / router details from saved names and recorded or live Wi-Fi.
+                var candidates by remember { mutableStateOf<List<ApCandidate>?>(null) }
+                var scanRequested by remember { mutableStateOf(false) }
+                val latD = f.lat.trim().replace(',', '.').toDoubleOrNull()
+                val lonD = f.lon.trim().replace(',', '.').toDoubleOrNull()
+                LaunchedEffect(f.type, latD, lonD) {
+                    if (latD == null || lonD == null) {
+                        candidates = emptyList()
+                        return@LaunchedEffect
+                    }
+                    candidates = mainVm.apCandidates(latD, lonD, vm.assetId)
+                    if (!scanRequested) {
+                        scanRequested = true
+                        if (WifiScanner(context).requestScan()) {
+                            delay(5_000)
+                            candidates = mainVm.apCandidates(latD, lonD, vm.assetId)
+                        }
+                    }
+                }
+                ApFillSection(
+                    candidates = candidates,
+                    linkedCount = Wifi.parseBssids(f.attributes[bssidField] ?: "").size,
+                    onPick = { chosen ->
+                        val all = candidates.orEmpty()
+                        val radios = listOf(chosen) + all.filter { Wifi.likelySameAp(chosen.bssid, it.bssid) }
+                        vm.update { fillFromAp(it, bssidField, chosen, radios, mainVm::isDefaultPinName) }
+                        val label = chosen.savedName ?: chosen.ssid.ifEmpty { chosen.bssid }
+                        val extra = radios.size - 1
+                        Toast.makeText(
+                            context,
+                            "Filled from $label" + if (extra > 0) " (+$extra other radio${if (extra == 1) "" else "s"})" else "",
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    },
                 )
             }
             OutlinedTextField(

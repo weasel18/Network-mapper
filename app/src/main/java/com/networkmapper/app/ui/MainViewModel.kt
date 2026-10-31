@@ -25,6 +25,7 @@ import com.networkmapper.app.survey.SurveyService
 import com.networkmapper.app.util.Fmt
 import com.networkmapper.app.util.Geo
 import com.networkmapper.app.util.Wifi
+import com.networkmapper.app.wifi.WifiScanner
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Dispatchers
@@ -130,6 +131,25 @@ data class HeatPoint(
     val bssid: String = "",
     val ssid: String = "",
     val timestamp: Long = 0,
+)
+
+enum class ApSource(val label: String) {
+    LIVE("In range now"),
+    NEARBY("Recorded near this pin"),
+    SITE("Recorded in this site"),
+    NAMED("Saved name"),
+}
+
+/** A Wi-Fi radio offered to pre-fill an AP / bridge / router pin. */
+data class ApCandidate(
+    val bssid: String,
+    val ssid: String,
+    val frequency: Int,
+    val rssi: Int?,
+    val savedName: String?,
+    val source: ApSource,
+    /** Name of another pin this radio is already linked to, if any. */
+    val linkedPin: String?,
 )
 
 /** What was heard at a tapped spot on the signal map. */
@@ -301,6 +321,49 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Names one or more radios (blank name removes it). */
     fun nameAps(bssids: Collection<String>, name: String) = viewModelScope.launch { repo.setApName(bssids, name) }
+
+    /**
+     * Radios to offer when filling in an AP-type pin: in range right now, recorded near the pin,
+     * recorded anywhere in this site, then any AP you've named. Live radios come first when you're
+     * standing near the pin (within 30 m), otherwise radios recorded near it do.
+     */
+    suspend fun apCandidates(lat: Double, lon: Double, excludeAssetId: Long? = null): List<ApCandidate> {
+        val names = explicitApNames.value
+        val site = currentSiteId.value
+        val pins = assets.value.filter { it.id != excludeAssetId }
+        fun linkedTo(bssid: String) = pins.firstOrNull { bssid in linkedBssids(it) }?.name
+
+        val scanner = WifiScanner(getApplication())
+        val live = (listOfNotNull(scanner.connected()) + scanner.currentResults())
+            .filter { it.bssid.isNotEmpty() && (it.connected || it.ageMs < 120_000) }
+            .sortedByDescending { it.rssi }
+            .map { ApCandidate(it.bssid, it.ssid, it.frequency, it.rssi, names[it.bssid], ApSource.LIVE, linkedTo(it.bssid)) }
+
+        val dLat = 75.0 / 111_320.0
+        val dLon = dLat / cos(Math.toRadians(lat)).coerceAtLeast(0.01)
+        val nearby = repo.getNetworksIn(site, lat - dLat, lat + dLat, lon - dLon, lon + dLon)
+            .map { ApCandidate(it.bssid, it.ssid, it.frequency, it.bestRssi, names[it.bssid], ApSource.NEARBY, linkedTo(it.bssid)) }
+        val inSite = repo.getNetworks(site)
+            .map { ApCandidate(it.bssid, it.ssid, it.frequency, it.bestRssi, names[it.bssid], ApSource.SITE, linkedTo(it.bssid)) }
+        val named = names.map { (b, n) -> ApCandidate(b, "", 0, null, n, ApSource.NAMED, linkedTo(b)) }
+
+        val me = location.value
+        val standingHere = me != null && Geo.distanceMeters(GeoPt(me.latitude, me.longitude), GeoPt(lat, lon)) <= 30.0
+        val ordered = if (standingHere) live + nearby + inSite + named else nearby + live + inSite + named
+        val out = LinkedHashMap<String, ApCandidate>()
+        ordered.forEach { out.putIfAbsent(it.bssid, it) }
+        return out.values.toList()
+    }
+
+    /** True for the automatic names given to new pins ("Wi-Fi access point 3", "Photo pin …"). */
+    fun isDefaultPinName(type: AssetType, name: String): Boolean {
+        val n = name.trim()
+        if (n.isEmpty() || n.startsWith("Photo pin ")) return true
+        return AssetType.entries.any { t ->
+            val glyph = t.label.substringBefore(" /").substringBefore(" (")
+            Regex("^${Regex.escape(glyph)} \\d+$").matches(n)
+        }
+    }
 
     /** Other recorded radios in this site that look like the same physical AP (other band / SSID). */
     fun siblingRadios(bssid: String): List<NetworkSummary> =

@@ -35,6 +35,9 @@ poles and demarcs. It also maps Wi-Fi signal strength by GPS and attaches GPS-ta
 - **Name APs by MAC / BSSID**: use ✎ on the map's "Wi-Fi heard here" card or on any row of the Wi-Fi screen. You can
   apply the name to the AP's other radios (same MAC prefix) and drop a linked AP pin where it was heard strongest.
   Names show everywhere (lists, legend, CSV/GeoJSON exports) and travel in backups.
+- **Pre-filled AP pins**: on an AP, wireless bridge or router pin, **Fill from Wi-Fi** suggests APs you've named,
+  APs recorded near the pin and APs in range now. Tap one to fill in its MAC / BSSID (and its other radios), SSID,
+  channel or frequency, and your saved name.
 - **Export / import sites**: choose which sites to export (all by default).
   - A *Full backup ZIP* holds everything: sites, pins, paths, colours, photos with captions, and Wi-Fi surveys, plus
     GeoJSON, KML and CSV for QGIS/ArcGIS/Excel.
