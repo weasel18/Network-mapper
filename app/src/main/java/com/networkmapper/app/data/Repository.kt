@@ -70,6 +70,7 @@ class Repository(private val context: Context, val db: AppDatabase) {
     val readingCount: Flow<Int> = wifiDao.observeReadingCount()
 
     suspend fun startSession(name: String): Long = wifiDao.insertSession(SurveySession(name = name))
+    suspend fun insertSession(session: SurveySession): Long = wifiDao.insertSession(session)
     suspend fun endSession(id: Long) = wifiDao.endSession(id, System.currentTimeMillis())
     suspend fun deleteSession(id: Long) = wifiDao.deleteSession(id)
     suspend fun deleteAllSurveys() = wifiDao.deleteAllSessions()

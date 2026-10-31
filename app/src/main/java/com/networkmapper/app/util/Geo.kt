@@ -129,4 +129,22 @@ object Fmt {
     fun dateTime(ms: Long): String = synchronized(dateTime) { dateTime.format(Date(ms)) }
     fun fileStamp(ms: Long = System.currentTimeMillis()): String = synchronized(fileStamp) { fileStamp.format(Date(ms)) }
     fun iso(ms: Long): String = synchronized(iso) { iso.format(Date(ms)) }
+    fun parseIso(text: String?): Long? {
+        if (text.isNullOrBlank()) return null
+        return try {
+            synchronized(iso) { iso.parse(text)?.time }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /** Recovers the capture time from our photo file names (IMG_yyyyMMdd_HHmmss_nnnn.jpg). */
+    fun parseFileStamp(name: String): Long? {
+        val m = Regex("(\\d{8}_\\d{6})").find(name) ?: return null
+        return try {
+            synchronized(fileStamp) { fileStamp.parse(m.value)?.time }
+        } catch (e: Exception) {
+            null
+        }
+    }
 }

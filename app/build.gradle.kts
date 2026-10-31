@@ -10,14 +10,31 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.networkmapper.app"
+        // New package id (was com.networkmapper.app) so this build installs alongside copies signed
+        // with the old per-build random keys; data moves across with Export -> Restore from backup.
+        applicationId = "com.networkmapper.field"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        // CI run number keeps every build an upgrade over the last one.
+        val build = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
+        versionCode = build
+        versionName = "1.1.$build"
+    }
+
+    signingConfigs {
+        // Fixed key committed to the repo so every build (local or CI) can update the installed app.
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
     }
 
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("debug")
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")

@@ -71,9 +71,35 @@ object Exporter {
             text("network.kml", buildKml(snap, photoPrefix = "photos/"))
             text("wifi_survey.csv", buildWifiCsv(snap))
             text("wifi_survey.geojson", buildWifiGeoJson(snap).toString())
+            text("photos.json", buildPhotoIndex(snap).toString(2))
             addPhotos(zip, repo, snap.photos, "photos/")
         }
         out
+    }
+
+    /** Copies a finished export to a user-chosen document (Storage Access Framework). */
+    suspend fun saveTo(context: Context, file: File, target: android.net.Uri) = withContext(Dispatchers.IO) {
+        context.contentResolver.openOutputStream(target)?.use { out -> file.inputStream().use { it.copyTo(out) } }
+            ?: error("Couldn't open the destination file")
+    }
+
+    /** Photo metadata (captions, where/when taken) so a restore is lossless. */
+    private fun buildPhotoIndex(s: Snapshot): JSONArray {
+        val arr = JSONArray()
+        s.photos.forEach { p ->
+            arr.put(
+                JSONObject()
+                    .put("file", p.fileName)
+                    .put("assetId", p.assetId ?: JSONObject.NULL)
+                    .put("pathId", p.pathId ?: JSONObject.NULL)
+                    .put("latitude", p.latitude ?: JSONObject.NULL)
+                    .put("longitude", p.longitude ?: JSONObject.NULL)
+                    .put("accuracyM", p.accuracy ?: JSONObject.NULL)
+                    .put("caption", p.caption)
+                    .put("takenAt", Fmt.iso(p.takenAt)),
+            )
+        }
+        return arr
     }
 
     fun share(context: Context, file: File) {
@@ -141,6 +167,9 @@ object Exporter {
                 .put("lengthM", Geo.pathLengthMeters(p.points))
                 .put("startAssetId", p.startAssetId ?: JSONObject.NULL)
                 .put("endAssetId", p.endAssetId ?: JSONObject.NULL)
+                .put("color", p.colorArgb?.let { String.format(Locale.US, "#%08X", it) } ?: JSONObject.NULL)
+                .put("created", Fmt.iso(p.createdAt))
+                .put("updated", Fmt.iso(p.updatedAt))
                 .put("attributes", JSONObject(p.attributes))
                 .put("photos", JSONArray(photosByPath[p.id].orEmpty().map { "photos/" + it.fileName }))
             features.put(

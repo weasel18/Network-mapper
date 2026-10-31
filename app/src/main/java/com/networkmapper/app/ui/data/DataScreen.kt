@@ -3,6 +3,8 @@
 package com.networkmapper.app.ui.data
 
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -17,7 +19,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.filled.Restore
+import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -28,6 +33,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -43,9 +49,12 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.networkmapper.app.data.AssetType
 import com.networkmapper.app.data.PathKind
+import com.networkmapper.app.BuildConfig
 import com.networkmapper.app.export.Exporter
+import com.networkmapper.app.export.Importer
 import com.networkmapper.app.ui.MainViewModel
 import com.networkmapper.app.ui.components.ConfirmDialog
+import com.networkmapper.app.util.Fmt
 import com.networkmapper.app.util.Geo
 import kotlinx.coroutines.launch
 import java.io.File
@@ -60,10 +69,45 @@ fun DataScreen(vm: MainViewModel, onBack: () -> Unit) {
     val readingCount by vm.repo.readingCount.collectAsStateWithLifecycle(0)
     var busy by remember { mutableStateOf(false) }
     var confirmClearWifi by remember { mutableStateOf(false) }
+    var restoreResult by remember { mutableStateOf<String?>(null) }
+    var busyLabel by remember { mutableStateOf("Preparing export…") }
+
+    // Save a full backup straight to a folder the user picks (Downloads, Drive, SD card…).
+    val saveBackup = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
+        if (uri == null || busy) return@rememberLauncherForActivityResult
+        busy = true
+        busyLabel = "Saving backup…"
+        scope.launch {
+            try {
+                Exporter.saveTo(context, Exporter.exportZip(context, vm.repo), uri)
+                Toast.makeText(context, "Backup saved", Toast.LENGTH_LONG).show()
+            } catch (e: Exception) {
+                Toast.makeText(context, "Backup failed: ${e.message}", Toast.LENGTH_LONG).show()
+            } finally {
+                busy = false
+            }
+        }
+    }
+
+    val restore = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null || busy) return@rememberLauncherForActivityResult
+        busy = true
+        busyLabel = "Restoring backup…"
+        scope.launch {
+            restoreResult = try {
+                Importer.importZip(context, vm.repo, uri).summary
+            } catch (e: Exception) {
+                "Restore failed: ${e.message}"
+            } finally {
+                busy = false
+            }
+        }
+    }
 
     fun export(block: suspend () -> File) {
         if (busy) return
         busy = true
+        busyLabel = "Preparing export…"
         scope.launch {
             try {
                 Exporter.share(context, block())
@@ -94,6 +138,7 @@ fun DataScreen(vm: MainViewModel, onBack: () -> Unit) {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text("Summary", style = MaterialTheme.typography.titleMedium)
+                    Text("App version ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodySmall)
                     Text("${assets.size} pins • ${paths.size} paths • $photoCount photos • $readingCount Wi-Fi readings")
                     AssetType.entries.forEach { t ->
                         val n = assets.count { it.type == t }
@@ -124,12 +169,38 @@ fun DataScreen(vm: MainViewModel, onBack: () -> Unit) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
                     Spacer(Modifier.width(8.dp))
-                    Text("Preparing export…")
+                    Text(busyLabel)
                 }
             }
             Text(
                 "GeoJSON opens in QGIS, ArcGIS and most web maps. The Wi-Fi CSV has one row per sample " +
                     "(time, lat/lon, SSID, BSSID, RSSI, channel) for coverage reports.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            Text("Backup & restore", style = MaterialTheme.typography.titleMedium)
+            Button(
+                onClick = { saveBackup.launch("network_mapper_backup_${Fmt.fileStamp()}.zip") },
+                enabled = !busy,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Icon(Icons.Default.Save, null)
+                Spacer(Modifier.width(8.dp))
+                Text("Save backup to device…")
+            }
+            OutlinedButton(
+                onClick = { restore.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream")) },
+                enabled = !busy,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Icon(Icons.Default.Restore, null)
+                Spacer(Modifier.width(8.dp))
+                Text("Restore from backup ZIP…")
+            }
+            Text(
+                "A backup is the same as the Full data ZIP. Restoring adds its pins, paths, photos and Wi-Fi " +
+                    "surveys to what's on this device and skips anything already here, so it's safe to run twice.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -154,6 +225,15 @@ fun DataScreen(vm: MainViewModel, onBack: () -> Unit) {
                 style = MaterialTheme.typography.bodySmall,
             )
         }
+    }
+
+    restoreResult?.let { msg ->
+        AlertDialog(
+            onDismissRequest = { restoreResult = null },
+            title = { Text("Restore") },
+            text = { Text(msg) },
+            confirmButton = { TextButton(onClick = { restoreResult = null }) { Text("OK") } },
+        )
     }
 
     if (confirmClearWifi) {

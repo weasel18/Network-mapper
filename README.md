@@ -45,6 +45,20 @@ Locally (Android SDK + JDK 17):
 
 Requires Android 8.0 (API 26) or newer.
 
+## Installing updates
+
+Builds are signed with the fixed key in `app/debug.keystore`, so each new APK installs over the previous one and
+keeps your data. Builds made before version 1.1 used a random key per build and the package id
+`com.networkmapper.app`. To move data from one of those:
+
+1. In the old app: **Export & data → Full data ZIP**, and save or send the ZIP somewhere you can open it on the phone
+   (Drive, Files, email). Finish any route you're drawing first.
+2. Install the new APK. It installs **alongside** the old app.
+3. In the new app: **Export & data → Restore from backup ZIP…** and pick the file.
+4. Once everything is there, uninstall the old copy.
+
+The committed key is fine for an internal, sideloaded tool. Use a private release key before distributing more widely.
+
 ## Notes
 
 - Android allows apps 4 Wi-Fi scans per 2 minutes. For denser surveys, turn off *Developer options → Wi-Fi scan throttling*.
