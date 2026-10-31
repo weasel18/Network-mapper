@@ -328,7 +328,7 @@ fun PathEditScreen(
                 }) {
                     Icon(Icons.Default.Timeline, null)
                     Spacer(Modifier.width(6.dp))
-                    Text("Edit route")
+                    Text("Edit / extend route")
                 }
                 OutlinedButton(onClick = {
                     if (vm.isDirty) saveThen(onShowOnMap) else onShowOnMap()

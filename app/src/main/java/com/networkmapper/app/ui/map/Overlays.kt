@@ -65,6 +65,9 @@ class MapOverlayController(private val context: Context, val mapView: MapView) {
     var onLongPress: (GeoPt) -> Boolean = { false }
     var onAssetDragged: (Asset, GeoPt) -> Unit = { _, _ -> }
     var onUserPan: () -> Unit = {}
+    var onVertexTap: (Int) -> Unit = {}
+    var onVertexDragStart: (Int) -> Unit = {}
+    var onVertexDrag: (Int, GeoPt) -> Unit = { _, _ -> }
 
     private val density = context.resources.displayMetrics.density
 
@@ -77,7 +80,12 @@ class MapOverlayController(private val context: Context, val mapView: MapView) {
     })
     private val touchWatcher = TouchWatcherOverlay(density) { onUserPan() }
     private val heat = HeatmapOverlay(density)
-    private val draftOverlay = DraftOverlay(density)
+    private val draftOverlay = DraftOverlay(
+        density,
+        onTap = { onVertexTap(it) },
+        onDragStart = { onVertexDragStart(it) },
+        onDrag = { i, p -> onVertexDrag(i, p) },
+    )
     private val myLocation = MyLocationOverlay(density)
     private val scaleBar = ScaleBarOverlay(mapView).apply {
         setAlignBottom(true)
@@ -98,11 +106,18 @@ class MapOverlayController(private val context: Context, val mapView: MapView) {
         mapView.invalidate()
     }
 
+    /** Cheap update for the in-progress route (called on every vertex drag / new point). */
+    fun setDraft(draft: Draft?) {
+        draftOverlay.draft = draft
+        mapView.invalidate()
+    }
+
     fun render(
         assets: List<Asset>,
         paths: List<NetPath>,
         settings: MapSettings,
-        draft: Draft?,
+        drafting: Boolean,
+        editingPathId: Long?,
         heatPoints: List<HeatPoint>,
         selected: Selection?,
     ) {
@@ -116,17 +131,19 @@ class MapOverlayController(private val context: Context, val mapView: MapView) {
         }
         if (settings.showPaths) {
             val selectedPathId = (selected as? Selection.PathSel)?.id
-            paths.filter { it.points.size >= 2 }.forEach { overlays.add(buildPolyline(it, it.id == selectedPathId)) }
+            // The path being re-edited is drawn by the draft overlay instead.
+            paths.filter { it.points.size >= 2 && it.id != editingPathId }
+                .forEach { overlays.add(buildPolyline(it, it.id == selectedPathId)) }
         }
-        draftOverlay.draft = draft
-        if (draft != null) overlays.add(draftOverlay)
         if (settings.showAssets) {
             val selectedAssetId = (selected as? Selection.AssetSel)?.id
-            val draggable = !settings.lockPins && draft == null
+            val draggable = !settings.lockPins && !drafting
             assets.filter { it.type !in settings.hiddenTypes }.forEach {
                 overlays.add(buildMarker(it, it.id == selectedAssetId, draggable))
             }
         }
+        // Above the pins so route vertices can be grabbed; taps elsewhere still reach pins (to snap).
+        if (drafting) overlays.add(draftOverlay)
         overlays.add(myLocation)
         overlays.add(scaleBar)
         overlays.add(copyright)
@@ -243,23 +260,48 @@ class HeatmapOverlay(private val density: Float) : Overlay() {
     }
 }
 
-/** Shows the in-progress path being drawn. */
-class DraftOverlay(private val density: Float) : Overlay() {
+/**
+ * Shows the in-progress route. Tap a vertex to select it; press and drag a vertex to move it.
+ * Touches that don't start on a vertex fall through to the map (tap to add a point, pan, zoom).
+ */
+class DraftOverlay(
+    private val density: Float,
+    private val onTap: (Int) -> Unit,
+    private val onDragStart: (Int) -> Unit,
+    private val onDrag: (Int, GeoPt) -> Unit,
+) : Overlay() {
     var draft: Draft? = null
+
+    private val accent = 0xFFFF6F00.toInt()
     private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = 4f * density
-        color = 0xFFFF6F00.toInt()
+        strokeCap = Paint.Cap.ROUND
+        color = accent
         pathEffect = DashPathEffect(floatArrayOf(10f * density, 6f * density), 0f)
     }
-    private val vertex = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFF6F00.toInt() }
+    private val vertex = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = accent }
     private val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = 2.5f * density
         color = 0xFFFFFFFF.toInt()
     }
+    private val selectedFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF1565C0.toInt() }
+    private val halo = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x551565C0 }
+    private val label = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0xFFFFFFFF.toInt()
+        textAlign = Paint.Align.CENTER
+        typeface = Typeface.DEFAULT_BOLD
+        textSize = 9f * density
+    }
     private val a = Point()
     private val b = Point()
+
+    // Touch state
+    private var activeIndex = -1
+    private var dragging = false
+    private var downX = 0f
+    private var downY = 0f
 
     override fun draw(c: Canvas?, proj: Projection?) {
         if (c == null || proj == null) return
@@ -270,12 +312,90 @@ class DraftOverlay(private val density: Float) : Overlay() {
             proj.toPixels(GeoPoint(pts[i].pt.lat, pts[i].pt.lon), b)
             c.drawLine(a.x.toFloat(), a.y.toFloat(), b.x.toFloat(), b.y.toFloat(), line)
         }
+        val activeEnd = if (d.extendFrom == com.networkmapper.app.ui.DraftEnd.START) 0 else pts.lastIndex
         pts.forEachIndexed { i, p ->
             proj.toPixels(GeoPoint(p.pt.lat, p.pt.lon), a)
-            val r = (if (i == 0 || i == pts.lastIndex) 7f else 4.5f) * density
-            c.drawCircle(a.x.toFloat(), a.y.toFloat(), r, vertex)
-            if (p.assetId != null || i == 0 || i == pts.lastIndex) c.drawCircle(a.x.toFloat(), a.y.toFloat(), r, ring)
+            val x = a.x.toFloat()
+            val y = a.y.toFloat()
+            val isEnd = i == 0 || i == pts.lastIndex
+            val r = (if (isEnd) 8f else 5.5f) * density
+            if (i == d.selectedIndex) {
+                c.drawCircle(x, y, r * 2.2f, halo)
+                c.drawCircle(x, y, r * 1.3f, selectedFill)
+                c.drawCircle(x, y, r * 1.3f, ring)
+            } else {
+                if (i == activeEnd && pts.size > 1) c.drawCircle(x, y, r * 1.9f, halo)
+                c.drawCircle(x, y, r, vertex)
+                if (p.assetId != null || isEnd) c.drawCircle(x, y, r, ring)
+            }
+            if (isEnd && pts.size > 1) {
+                c.drawText(if (i == 0) "A" else "B", x, y - (label.descent() + label.ascent()) / 2f, label)
+            }
         }
+    }
+
+    private fun hitVertex(x: Float, y: Float, proj: Projection, d: Draft): Int? {
+        val slop = 22f * density
+        var best: Int? = null
+        var bestDist = Float.MAX_VALUE
+        d.points.forEachIndexed { i, p ->
+            proj.toPixels(GeoPoint(p.pt.lat, p.pt.lon), a)
+            val dist = hypot(a.x - x, a.y - y)
+            if (dist < slop && dist < bestDist) {
+                best = i
+                bestDist = dist
+            }
+        }
+        return best
+    }
+
+    override fun onTouchEvent(event: MotionEvent?, mapView: MapView?): Boolean {
+        val e = event ?: return false
+        val mv = mapView ?: return false
+        val d = draft ?: return false
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                val hit = hitVertex(e.x, e.y, mv.projection, d) ?: run {
+                    activeIndex = -1
+                    return false
+                }
+                activeIndex = hit
+                dragging = false
+                downX = e.x
+                downY = e.y
+                return true
+            }
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                // Second finger: hand over to pinch-zoom.
+                activeIndex = -1
+                dragging = false
+                return false
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (activeIndex < 0) return false
+                if (!dragging && hypot(e.x - downX, e.y - downY) > 8f * density) {
+                    dragging = true
+                    onDragStart(activeIndex)
+                }
+                if (dragging) {
+                    val g = mv.projection.fromPixels(e.x.toInt(), e.y.toInt())
+                    onDrag(activeIndex, GeoPt(g.latitude, g.longitude))
+                }
+                return true
+            }
+            MotionEvent.ACTION_UP -> {
+                if (activeIndex < 0) return false
+                if (!dragging) onTap(activeIndex)
+                activeIndex = -1
+                dragging = false
+                return true
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                activeIndex = -1
+                dragging = false
+            }
+        }
+        return false
     }
 }
 

@@ -14,6 +14,10 @@ poles and demarcs. It also maps Wi-Fi signal strength by GPS and attaches GPS-ta
 - **Paths**: draw fiber (underground/aerial), conduit, copper or wireless links. Tap the map to add points, tap pins to
   snap the ends to junctions or bridges, or turn on **Auto-track** and walk the route with GPS. You can set length,
   fiber count, cable type and colour coding.
+  Tap **Finish** to save. To change a route later, tap it on the map, then **Edit / extend route**. Tap a point to select
+  it, drag it to move it, or delete it or insert a point next to it. **Undo** steps back through every change.
+  Switch between *adding at end (B)* and *adding at start (A)* to continue the route from either end, by tapping or
+  Auto-track. An unfinished route is kept if the app is closed.
 - **Photos**: the camera button creates a *photo pin* at your location. You can also add photos to any pin or path.
   GPS is stored in the database and written to the JPEG's EXIF data.
 - **Wi-Fi survey**: a foreground service logs every scan result (SSID, BSSID, RSSI, channel) with the GPS fix as you

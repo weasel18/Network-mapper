@@ -1,4 +1,4 @@
-@file:OptIn(ExperimentalMaterial3Api::class)
+@file:OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 
 package com.networkmapper.app.ui.map
 
@@ -7,11 +7,14 @@ import android.content.Intent
 import android.location.Location
 import android.net.Uri
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -27,9 +30,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AddLocationAlt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Directions
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.GpsFixed
@@ -42,6 +47,7 @@ import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
@@ -92,6 +98,7 @@ import com.networkmapper.app.data.NetPath
 import com.networkmapper.app.survey.SurveyState
 import com.networkmapper.app.ui.CoverageStats
 import com.networkmapper.app.ui.Draft
+import com.networkmapper.app.ui.DraftEnd
 import com.networkmapper.app.ui.HeatFilter
 import com.networkmapper.app.ui.MainViewModel
 import com.networkmapper.app.ui.Selection
@@ -142,6 +149,7 @@ fun MapScreen(
     var showMenu by remember { mutableStateOf(false) }
     var follow by rememberSaveable { mutableStateOf(false) }
     var linkRadiosFor by remember { mutableStateOf<Asset?>(null) }
+    var confirmLeaveDraft by remember { mutableStateOf(false) }
 
     // ---- MapView ----
     val mapView = remember {
@@ -203,8 +211,10 @@ fun MapScreen(
         }
         overlays.onPathClick = { path -> if (vm.draft.value == null) vm.select(Selection.PathSel(path.id)) }
         overlays.onMapTap = { pt ->
-            if (vm.draft.value != null) {
-                vm.addDraftPoint(pt)
+            val current = vm.draft.value
+            if (current != null) {
+                // With a point selected, tapping the map just deselects it.
+                if (current.selectedIndex != null) vm.selectDraftPoint(null) else vm.addDraftPoint(pt)
                 true
             } else {
                 vm.select(null)
@@ -217,12 +227,36 @@ fun MapScreen(
         }
         overlays.onAssetDragged = { asset, pt -> vm.moveAsset(asset, pt) }
         overlays.onUserPan = { follow = false }
+        overlays.onVertexTap = { i -> vm.selectDraftPoint(i) }
+        overlays.onVertexDragStart = { i -> vm.beginDraftPointMove(i) }
+        overlays.onVertexDrag = { i, pt -> vm.moveDraftPoint(i, pt) }
     }
 
     LaunchedEffect(settings.tileStyle) { overlays.setTileStyle(settings.tileStyle) }
-    LaunchedEffect(assets, paths, settings, draft, heat, selected) {
-        overlays.render(assets, paths, settings, draft, heat, selected)
+    val drafting = draft != null
+    val editingPathId = draft?.editingPathId
+    LaunchedEffect(assets, paths, settings, drafting, editingPathId, heat, selected) {
+        overlays.render(assets, paths, settings, drafting, editingPathId, heat, selected)
     }
+    LaunchedEffect(draft) { overlays.setDraft(draft) }
+
+    fun finishDraft() {
+        val editing = vm.draft.value?.editingPathId != null
+        scope.launch {
+            val id = vm.saveDraft()
+            when {
+                id == null -> Toast.makeText(context, "A route needs at least 2 points", Toast.LENGTH_SHORT).show()
+                editing -> {
+                    Toast.makeText(context, "Route saved", Toast.LENGTH_SHORT).show()
+                    vm.select(Selection.PathSel(id))
+                }
+                else -> onOpenPath(id)
+            }
+        }
+    }
+
+    // Back while drawing asks what to do instead of silently leaving.
+    BackHandler(enabled = drafting) { confirmLeaveDraft = true }
     LaunchedEffect(location, follow) {
         overlays.setLocation(location)
         val loc = location ?: return@LaunchedEffect
@@ -333,22 +367,17 @@ fun MapScreen(
                 when {
                     d != null -> DraftBar(
                         draft = d,
-                        onUndo = vm::undoDraftPoint,
+                        onUndo = vm::undoDraft,
                         onGpsPoint = {
                             if (!vm.addDraftGpsPoint()) Toast.makeText(context, "No GPS fix yet", Toast.LENGTH_SHORT).show()
                         },
                         onToggleAuto = vm::toggleAutoTrack,
-                        onCancel = vm::cancelDraft,
-                        onSave = {
-                            scope.launch {
-                                val id = vm.saveDraft()
-                                if (id == null) {
-                                    Toast.makeText(context, "A path needs at least 2 points", Toast.LENGTH_SHORT).show()
-                                } else {
-                                    onOpenPath(id)
-                                }
-                            }
-                        },
+                        onExtendFrom = vm::setDraftExtendFrom,
+                        onCancel = { if (d.canUndo) confirmLeaveDraft = true else vm.cancelDraft() },
+                        onFinish = ::finishDraft,
+                        onDeletePoint = vm::deleteSelectedDraftPoint,
+                        onInsertPoint = vm::insertDraftPointNearSelected,
+                        onDeselect = { vm.selectDraftPoint(null) },
                     )
                     selAsset != null -> AssetCard(
                         asset = selAsset,
@@ -371,6 +400,7 @@ fun MapScreen(
                     selPath != null -> PathCard(
                         path = selPath,
                         onEdit = { onOpenPath(selPath.id) },
+                        onEditRoute = { vm.editPathRoute(selPath) },
                         onClose = { vm.select(null) },
                     )
                     else -> {
@@ -426,6 +456,41 @@ fun MapScreen(
                 }
             },
             onDismiss = { pendingPin = null },
+        )
+    }
+
+    if (confirmLeaveDraft) {
+        val d = draft
+        AlertDialog(
+            onDismissRequest = { confirmLeaveDraft = false },
+            title = { Text(if (d?.editingPathId != null) "Leave route editing?" else "Leave route drawing?") },
+            text = {
+                Text(
+                    if ((d?.points?.size ?: 0) >= 2) {
+                        "Finish to save the route, or discard your changes."
+                    } else {
+                        "This route has fewer than 2 points and can't be saved yet."
+                    },
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmLeaveDraft = false
+                        finishDraft()
+                    },
+                    enabled = (d?.points?.size ?: 0) >= 2,
+                ) { Text("Finish & save") }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = {
+                        confirmLeaveDraft = false
+                        vm.cancelDraft()
+                    }) { Text("Discard") }
+                    TextButton(onClick = { confirmLeaveDraft = false }) { Text("Keep drawing") }
+                }
+            },
         )
     }
 
@@ -551,11 +616,16 @@ private fun DraftBar(
     onUndo: () -> Unit,
     onGpsPoint: () -> Unit,
     onToggleAuto: () -> Unit,
+    onExtendFrom: (DraftEnd) -> Unit,
     onCancel: () -> Unit,
-    onSave: () -> Unit,
+    onFinish: () -> Unit,
+    onDeletePoint: () -> Unit,
+    onInsertPoint: () -> Unit,
+    onDeselect: () -> Unit,
 ) {
     Card(Modifier.fillMaxWidth(), elevation = CardDefaults.cardElevation(6.dp)) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            // Header: title + always-visible Finish button.
             Row(verticalAlignment = Alignment.CenterVertically) {
                 KindSwatch(draft.kind)
                 Spacer(Modifier.width(8.dp))
@@ -563,24 +633,61 @@ private fun DraftBar(
                     Text(
                         if (draft.editingPathId != null) "Editing route" else "Drawing: ${draft.kind.label}",
                         fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                     Text(
                         "${draft.points.size} points • ${Geo.formatDistance(draft.lengthMeters)}",
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
+                Button(onClick = onFinish, enabled = draft.points.size >= 2) {
+                    Icon(Icons.Default.Check, null)
+                    Spacer(Modifier.width(4.dp))
+                    Text("Finish")
+                }
             }
-            Text(
-                "Tap map to add a point • tap a pin to snap to it",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Row(
-                Modifier.horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
+
+            val sel = draft.selectedIndex
+            if (sel != null && sel in draft.points.indices) {
+                // Selected-vertex tools.
+                Text(
+                    "Point ${sel + 1} of ${draft.points.size} selected – drag it to move, or:",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilledTonalButton(onClick = onDeletePoint) {
+                        Icon(Icons.Default.Delete, null)
+                        Spacer(Modifier.width(4.dp))
+                        Text("Delete point")
+                    }
+                    FilledTonalButton(onClick = onInsertPoint, enabled = draft.points.size >= 2) {
+                        Icon(Icons.Default.Add, null)
+                        Spacer(Modifier.width(4.dp))
+                        Text("Insert point")
+                    }
+                    TextButton(onClick = onDeselect) { Text("Done") }
+                }
+            } else {
+                Text(
+                    when {
+                        draft.points.isEmpty() -> "Tap the map to place the first point, or use GPS point / Auto-track."
+                        draft.points.size == 1 -> "Add at least one more point, then tap Finish."
+                        else -> "Tap map to add at end ${if (draft.extendFrom == DraftEnd.START) "A" else "B"} • " +
+                            "tap a pin to snap • tap a point to edit it, drag to move"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            // Tools wrap onto a second line instead of scrolling off-screen.
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.Center,
             ) {
-                IconButton(onClick = onUndo, enabled = draft.points.isNotEmpty()) {
+                IconButton(onClick = onUndo, enabled = draft.canUndo) {
                     Icon(Icons.AutoMirrored.Filled.Undo, "Undo")
                 }
                 FilledTonalButton(onClick = onGpsPoint) {
@@ -589,12 +696,16 @@ private fun DraftBar(
                     Text("GPS point")
                 }
                 FilterChip(selected = draft.autoTrack, onClick = onToggleAuto, label = { Text("Auto-track") })
-                TextButton(onClick = onCancel) { Text("Cancel") }
-                FilledTonalButton(onClick = onSave, enabled = draft.points.size >= 2) {
-                    Icon(Icons.Default.Check, null)
-                    Spacer(Modifier.width(4.dp))
-                    Text("Save")
+                if (draft.points.size >= 2) {
+                    FilterChip(
+                        selected = draft.extendFrom == DraftEnd.START,
+                        onClick = {
+                            onExtendFrom(if (draft.extendFrom == DraftEnd.START) DraftEnd.END else DraftEnd.START)
+                        },
+                        label = { Text(if (draft.extendFrom == DraftEnd.START) "Adding at start (A)" else "Adding at end (B)") },
+                    )
                 }
+                TextButton(onClick = onCancel) { Text("Cancel") }
             }
         }
     }
@@ -678,7 +789,7 @@ private fun AssetCard(
 }
 
 @Composable
-private fun PathCard(path: NetPath, onEdit: () -> Unit, onClose: () -> Unit) {
+private fun PathCard(path: NetPath, onEdit: () -> Unit, onEditRoute: () -> Unit, onClose: () -> Unit) {
     Card(Modifier.fillMaxWidth(), elevation = CardDefaults.cardElevation(6.dp)) {
         Column(Modifier.padding(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -701,10 +812,17 @@ private fun PathCard(path: NetPath, onEdit: () -> Unit, onClose: () -> Unit) {
                 "Length ${Geo.formatDistance(Geo.pathLengthMeters(path.points))} • ${path.points.size} points",
                 style = MaterialTheme.typography.bodyMedium,
             )
-            FilledTonalButton(onClick = onEdit) {
-                Icon(Icons.Default.Edit, null)
-                Spacer(Modifier.width(4.dp))
-                Text("Details")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilledTonalButton(onClick = onEdit) {
+                    Icon(Icons.Default.Edit, null)
+                    Spacer(Modifier.width(4.dp))
+                    Text("Details")
+                }
+                FilledTonalButton(onClick = onEditRoute) {
+                    Icon(Icons.Default.Timeline, null)
+                    Spacer(Modifier.width(4.dp))
+                    Text("Edit / extend route")
+                }
             }
         }
     }

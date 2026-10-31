@@ -144,7 +144,9 @@ fun DataScreen(vm: MainViewModel, onBack: () -> Unit) {
                 "• Long-press the map to drop a pin anywhere; the + button drops one at your GPS position.\n" +
                     "• The camera button creates a photo pin at your location; photos are GPS-tagged in EXIF too.\n" +
                     "• Use the path tool to draw fiber runs: tap pins to snap the ends to junctions or splices, " +
-                    "or turn on Auto-track and walk the route.\n" +
+                    "or turn on Auto-track and walk the route. Tap Finish to save.\n" +
+                    "• To edit or continue a route later, tap it on the map → Edit / extend route. Tap a point to " +
+                    "select, drag, delete or insert; switch ‘Adding at end/start’ to extend either end.\n" +
                     "• Wireless links: choose ‘Wireless link’ and tap the two bridge pins.\n" +
                     "• Satellite imagery is in the Layers menu. Map tiles you've viewed stay cached for offline use.\n" +
                     "• Unlock pins in Layers to drag a pin to a corrected position (long-press it, then drag).",

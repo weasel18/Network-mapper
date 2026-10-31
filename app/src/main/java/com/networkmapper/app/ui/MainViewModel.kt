@@ -1,6 +1,7 @@
 package com.networkmapper.app.ui
 
 import android.app.Application
+import android.content.Context
 import android.location.Location
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -20,12 +21,14 @@ import com.networkmapper.app.util.Fmt
 import com.networkmapper.app.util.Geo
 import com.networkmapper.app.util.Wifi
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
@@ -34,6 +37,8 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.File
 import kotlin.math.cos
 
@@ -55,13 +60,29 @@ sealed interface Selection {
 
 data class DraftPoint(val pt: GeoPt, val assetId: Long? = null)
 
+/** Which end of the route new points (taps, GPS points, auto-track) are added to. */
+enum class DraftEnd { END, START }
+
 data class Draft(
     val kind: PathKind,
     val editingPathId: Long? = null,
     val points: List<DraftPoint> = emptyList(),
     val autoTrack: Boolean = false,
+    val extendFrom: DraftEnd = DraftEnd.END,
+    /** Vertex currently selected for move / delete / insert. */
+    val selectedIndex: Int? = null,
+    /** Previous point lists, newest last, for multi-step undo. */
+    val history: List<List<DraftPoint>> = emptyList(),
 ) {
     val lengthMeters: Double get() = Geo.pathLengthMeters(points.map { it.pt })
+    val canUndo: Boolean get() = history.isNotEmpty()
+
+    /** Records the current points in history and replaces them. */
+    fun commit(newPoints: List<DraftPoint>, selected: Int? = null): Draft = copy(
+        points = newPoints,
+        history = (history + listOf(points)).takeLast(200),
+        selectedIndex = selected?.takeIf { it in newPoints.indices },
+    )
 }
 
 sealed interface HeatFilter {
@@ -97,7 +118,7 @@ data class CoverageStats(
     val edgeRangeM: Double?,
 )
 
-@OptIn(ExperimentalCoroutinesApi::class)
+@OptIn(ExperimentalCoroutinesApi::class, FlowPreview::class)
 class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     val repo = (app as NetworkMapperApp).repository
@@ -248,13 +269,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------- Path drawing ----------
     val draft = MutableStateFlow<Draft?>(null)
+    private val draftPrefs = app.getSharedPreferences("draft", Context.MODE_PRIVATE)
+
+    init {
+        // An unfinished route survives the app being closed or killed.
+        draft.value = restoreDraft()
+        viewModelScope.launch { draft.debounce(400).collect { persistDraft(it) } }
+    }
 
     fun startDraft(kind: PathKind) {
         selected.value = null
         draft.value = Draft(kind = kind)
     }
 
-    fun editPathRoute(path: NetPath) {
+    /** Re-opens a saved path's route for editing / extending (from the end by default). */
+    fun editPathRoute(path: NetPath, extendFrom: DraftEnd = DraftEnd.END) {
         selected.value = null
         val pts = path.points.mapIndexed { i, p ->
             DraftPoint(
@@ -266,12 +295,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 },
             )
         }
-        draft.value = Draft(kind = path.kind, editingPathId = path.id, points = pts)
-        path.points.firstOrNull()?.let { focusOn(it) }
+        draft.value = Draft(kind = path.kind, editingPathId = path.id, points = pts, extendFrom = extendFrom)
+        val focus = if (extendFrom == DraftEnd.END) path.points.lastOrNull() else path.points.firstOrNull()
+        focus?.let { focusOn(it) }
     }
 
     fun addDraftPoint(pt: GeoPt, assetId: Long? = null) {
-        draft.update { d -> d?.copy(points = d.points + DraftPoint(pt, assetId)) }
+        draft.update { d ->
+            d ?: return@update null
+            val p = DraftPoint(pt, assetId)
+            d.commit(if (d.extendFrom == DraftEnd.START) listOf(p) + d.points else d.points + p)
+        }
     }
 
     fun addDraftGpsPoint(): Boolean {
@@ -280,12 +314,64 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         return true
     }
 
-    fun undoDraftPoint() {
-        draft.update { d -> d?.copy(points = d.points.dropLast(1)) }
+    fun undoDraft() {
+        draft.update { d ->
+            if (d == null || d.history.isEmpty()) return@update d
+            d.copy(points = d.history.last(), history = d.history.dropLast(1), selectedIndex = null)
+        }
     }
 
     fun toggleAutoTrack() {
         draft.update { d -> d?.copy(autoTrack = !d.autoTrack) }
+    }
+
+    fun setDraftExtendFrom(end: DraftEnd) {
+        draft.update { d -> d?.copy(extendFrom = end) }
+        val d = draft.value ?: return
+        val focus = if (end == DraftEnd.END) d.points.lastOrNull() else d.points.firstOrNull()
+        focus?.let { focusOn(it.pt) }
+    }
+
+    fun selectDraftPoint(index: Int?) {
+        draft.update { d -> d?.copy(selectedIndex = if (index == d.selectedIndex) null else index) }
+    }
+
+    /** Called once when the user starts dragging a vertex, so the whole drag is one undo step. */
+    fun beginDraftPointMove(index: Int) {
+        draft.update { d -> d?.copy(history = (d.history + listOf(d.points)).takeLast(200), selectedIndex = index) }
+    }
+
+    /** Live vertex drag; a moved point is no longer snapped to a pin. */
+    fun moveDraftPoint(index: Int, pt: GeoPt) {
+        draft.update { d ->
+            if (d == null || index !in d.points.indices) return@update d
+            d.copy(points = d.points.toMutableList().also { it[index] = DraftPoint(pt, null) })
+        }
+    }
+
+    fun deleteSelectedDraftPoint() {
+        draft.update { d ->
+            if (d == null) return@update null
+            val i = d.selectedIndex ?: return@update d
+            if (i !in d.points.indices) return@update d
+            val pts = d.points.toMutableList().also { it.removeAt(i) }
+            d.commit(pts, selected = null)
+        }
+    }
+
+    /** Inserts a new vertex halfway along the segment after the selected point (before it, for the last point). */
+    fun insertDraftPointNearSelected() {
+        draft.update { d ->
+            if (d == null) return@update null
+            val i = d.selectedIndex ?: return@update d
+            if (d.points.size < 2 || i !in d.points.indices) return@update d
+            val (a, b) = if (i < d.points.lastIndex) i to i + 1 else i - 1 to i
+            val pa = d.points[a].pt
+            val pb = d.points[b].pt
+            val mid = DraftPoint(GeoPt((pa.lat + pb.lat) / 2, (pa.lon + pb.lon) / 2))
+            val pts = d.points.toMutableList().also { it.add(b, mid) }
+            d.commit(pts, selected = b)
+        }
     }
 
     fun cancelDraft() {
@@ -297,8 +383,48 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (!d.autoTrack) return
         if (loc.hasAccuracy() && loc.accuracy > 25f) return
         val pt = GeoPt(loc.latitude, loc.longitude)
-        val last = d.points.lastOrNull()?.pt
-        if (last == null || Geo.distanceMeters(last, pt) >= 3.0) addDraftPoint(pt)
+        val end = if (d.extendFrom == DraftEnd.START) d.points.firstOrNull() else d.points.lastOrNull()
+        if (end == null || Geo.distanceMeters(end.pt, pt) >= 3.0) addDraftPoint(pt)
+    }
+
+    private fun persistDraft(d: Draft?) {
+        try {
+            if (d == null) {
+                draftPrefs.edit().remove("draft").apply()
+                return
+            }
+            val pts = JSONArray()
+            d.points.forEach { p ->
+                pts.put(JSONArray().put(p.pt.lat).put(p.pt.lon).put(p.assetId ?: JSONObject.NULL))
+            }
+            val o = JSONObject()
+                .put("kind", d.kind.name)
+                .put("editingPathId", d.editingPathId ?: JSONObject.NULL)
+                .put("extendFrom", d.extendFrom.name)
+                .put("points", pts)
+            draftPrefs.edit().putString("draft", o.toString()).apply()
+        } catch (e: Exception) {
+            // Best effort only.
+        }
+    }
+
+    private fun restoreDraft(): Draft? = try {
+        draftPrefs.getString("draft", null)?.let { json ->
+            val o = JSONObject(json)
+            val arr = o.getJSONArray("points")
+            val pts = (0 until arr.length()).map { i ->
+                val p = arr.getJSONArray(i)
+                DraftPoint(GeoPt(p.getDouble(0), p.getDouble(1)), if (p.isNull(2)) null else p.getLong(2))
+            }
+            Draft(
+                kind = PathKind.entries.firstOrNull { it.name == o.optString("kind") } ?: PathKind.FIBER_UNDERGROUND,
+                editingPathId = if (o.isNull("editingPathId")) null else o.getLong("editingPathId"),
+                points = pts,
+                extendFrom = if (o.optString("extendFrom") == DraftEnd.START.name) DraftEnd.START else DraftEnd.END,
+            )
+        }
+    } catch (e: Exception) {
+        null
     }
 
     /** Saves the draft; returns the path id (new or edited) or null when there's nothing to save. */
@@ -308,8 +434,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val pts = d.points.map { it.pt }
         val startId = d.points.first().assetId
         val endId = d.points.last().assetId
-        val id = if (d.editingPathId != null) {
-            val existing = repo.getPath(d.editingPathId) ?: return null
+        val existing = d.editingPathId?.let { repo.getPath(it) }
+        val id = if (existing != null) {
             repo.updatePath(existing.copy(points = pts, startAssetId = startId, endAssetId = endId))
             existing.id
         } else {
