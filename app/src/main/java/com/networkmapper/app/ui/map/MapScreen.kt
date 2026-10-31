@@ -40,6 +40,8 @@ import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material.icons.filled.Wifi
+import androidx.compose.material.icons.filled.WifiOff
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
@@ -88,7 +90,9 @@ import com.networkmapper.app.data.AssetType
 import com.networkmapper.app.data.GeoPt
 import com.networkmapper.app.data.NetPath
 import com.networkmapper.app.survey.SurveyState
+import com.networkmapper.app.ui.CoverageStats
 import com.networkmapper.app.ui.Draft
+import com.networkmapper.app.ui.HeatFilter
 import com.networkmapper.app.ui.MainViewModel
 import com.networkmapper.app.ui.Selection
 import com.networkmapper.app.ui.TileStyle
@@ -128,6 +132,7 @@ fun MapScreen(
     val location by vm.location.collectAsStateWithLifecycle()
     val selected by vm.selected.collectAsStateWithLifecycle()
     val heatFilter by vm.heatFilter.collectAsStateWithLifecycle()
+    val coverage by vm.coverage.collectAsStateWithLifecycle()
     val surveyRunning by SurveyState.running.collectAsStateWithLifecycle()
     val surveyReadings by SurveyState.readings.collectAsStateWithLifecycle()
 
@@ -136,6 +141,7 @@ fun MapScreen(
     var showLayers by remember { mutableStateOf(false) }
     var showMenu by remember { mutableStateOf(false) }
     var follow by rememberSaveable { mutableStateOf(false) }
+    var linkRadiosFor by remember { mutableStateOf<Asset?>(null) }
 
     // ---- MapView ----
     val mapView = remember {
@@ -191,6 +197,8 @@ fun MapScreen(
                 vm.addDraftPoint(GeoPt(asset.latitude, asset.longitude), asset.id)
             } else {
                 vm.select(Selection.AssetSel(asset.id))
+                // While a single-device signal map is open, tapping another linked radio switches to it.
+                if (vm.settings.value.showHeatmap && vm.heatFilter.value is HeatFilter.Device) vm.showDeviceSignal(asset)
             }
         }
         overlays.onPathClick = { path -> if (vm.draft.value == null) vm.select(Selection.PathSel(path.id)) }
@@ -294,7 +302,7 @@ fun MapScreen(
                         onClick = onOpenWifi,
                     )
                 }
-                if (settings.showHeatmap) HeatLegend(heatFilter.label)
+                if (settings.showHeatmap) HeatLegend(heatFilter.label, heat.size, coverage, onClear = vm::clearHeatmap)
             }
 
             // ---- Bottom area ----
@@ -348,6 +356,17 @@ fun MapScreen(
                         onEdit = { onOpenAsset(selAsset.id) },
                         onNavigate = { navigateTo(context, selAsset.latitude, selAsset.longitude, selAsset.name) },
                         onClose = { vm.select(null) },
+                        linkedRadios = vm.linkedBssids(selAsset).size,
+                        signalShowing = settings.showHeatmap &&
+                            (heatFilter as? HeatFilter.Device)?.assetId == selAsset.id,
+                        onSignal = {
+                            if (settings.showHeatmap && (heatFilter as? HeatFilter.Device)?.assetId == selAsset.id) {
+                                vm.clearHeatmap()
+                            } else if (!vm.showDeviceSignal(selAsset)) {
+                                linkRadiosFor = selAsset
+                            }
+                        },
+                        onLinkRadios = { linkRadiosFor = selAsset },
                     )
                     selPath != null -> PathCard(
                         path = selPath,
@@ -410,6 +429,14 @@ fun MapScreen(
         )
     }
 
+    linkRadiosFor?.let { asset ->
+        LinkRadiosDialog(
+            vm = vm,
+            asset = asset,
+            onDismiss = { linkRadiosFor = null },
+        )
+    }
+
     if (showKindPicker) {
         PathKindPickerDialog(
             onPick = { kind ->
@@ -467,10 +494,41 @@ private fun GpsChip(location: Location?, hasPermission: Boolean, onRequestPermis
 }
 
 @Composable
-private fun HeatLegend(label: String) {
+private fun HeatLegend(label: String, spots: Int, coverage: CoverageStats?, onClear: () -> Unit) {
     Surface(shape = RoundedCornerShape(8.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f), shadowElevation = 3.dp) {
-        Column(Modifier.padding(8.dp)) {
-            Text(label, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Column(Modifier.padding(start = 8.dp, top = 2.dp, bottom = 8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    label,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                IconButton(onClick = onClear, modifier = Modifier.size(32.dp)) {
+                    Icon(Icons.Default.Close, "Hide heatmap", Modifier.size(16.dp))
+                }
+            }
+            if (coverage != null) {
+                Text(
+                    buildString {
+                        append("${coverage.spots} spots")
+                        coverage.bestRssi?.let { append(" • best $it dBm") }
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                )
+                Text(
+                    "Reliable (≥ -67): " + (coverage.reliableRangeM?.let { "up to ${Geo.formatDistance(it)}" } ?: "none recorded"),
+                    style = MaterialTheme.typography.labelSmall,
+                )
+                Text(
+                    "Usable (≥ -80): " + (coverage.edgeRangeM?.let { "up to ${Geo.formatDistance(it)}" } ?: "none recorded"),
+                    style = MaterialTheme.typography.labelSmall,
+                )
+            } else if (spots == 0) {
+                Text("No survey samples for this filter yet", style = MaterialTheme.typography.labelSmall)
+            }
             Spacer(Modifier.size(4.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Wifi.legend.forEach { (text, color) ->
@@ -549,6 +607,10 @@ private fun AssetCard(
     onEdit: () -> Unit,
     onNavigate: () -> Unit,
     onClose: () -> Unit,
+    linkedRadios: Int,
+    signalShowing: Boolean,
+    onSignal: () -> Unit,
+    onLinkRadios: () -> Unit,
 ) {
     Card(Modifier.fillMaxWidth(), elevation = CardDefaults.cardElevation(6.dp)) {
         Column(Modifier.padding(12.dp)) {
@@ -589,6 +651,26 @@ private fun AssetCard(
                     Icon(Icons.Default.Directions, null)
                     Spacer(Modifier.width(4.dp))
                     Text("Navigate")
+                }
+            }
+            if (asset.type.bssidField != null) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (signalShowing) {
+                        Button(onClick = onSignal) {
+                            Icon(Icons.Default.WifiOff, null)
+                            Spacer(Modifier.width(4.dp))
+                            Text("Hide signal")
+                        }
+                    } else {
+                        FilledTonalButton(onClick = onSignal) {
+                            Icon(Icons.Default.Wifi, null)
+                            Spacer(Modifier.width(4.dp))
+                            Text("Signal map")
+                        }
+                    }
+                    TextButton(onClick = onLinkRadios) {
+                        Text(if (linkedRadios == 0) "Link radio…" else "$linkedRadios radio${if (linkedRadios == 1) "" else "s"} linked")
+                    }
                 }
             }
         }

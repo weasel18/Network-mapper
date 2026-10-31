@@ -14,6 +14,8 @@ enum class AssetType(
     val colorArgb: Long,
     val glyph: String,
     val suggestedFields: List<String>,
+    /** Attribute that holds this device's Wi-Fi radio MAC(s) / BSSID(s), for per-device signal maps. */
+    val bssidField: String? = null,
 ) {
     FIBER_JUNCTION(
         "Fiber junction / Handhole", 0xFF1E88E5, "J",
@@ -34,10 +36,12 @@ enum class AssetType(
     ACCESS_POINT(
         "Wi-Fi access point", 0xFF43A047, "A",
         listOf("SSID", "MAC / BSSID", "IP address", "Model", "Channel", "Mount height", "Switch port"),
+        bssidField = "MAC / BSSID",
     ),
     WIRELESS_BRIDGE(
         "Wireless bridge / PtP radio", 0xFFFB8C00, "B",
         listOf("Link name", "Model", "IP address", "MAC", "Frequency", "Channel width", "Azimuth (°)", "Tilt (°)", "Peer device", "Signal (dBm)"),
+        bssidField = "MAC",
     ),
     SWITCH(
         "Switch", 0xFF00897B, "W",
@@ -45,7 +49,8 @@ enum class AssetType(
     ),
     ROUTER(
         "Router / Gateway / OLT", 0xFF3949AB, "R",
-        listOf("Hostname", "Model", "IP address", "WAN / Uplink", "Serial"),
+        listOf("Hostname", "Model", "IP address", "WAN / Uplink", "Serial", "Wi-Fi MAC / BSSID"),
+        bssidField = "Wi-Fi MAC / BSSID",
     ),
     POLE(
         "Pole / Tower", 0xFF6D4C41, "P",

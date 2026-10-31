@@ -92,6 +92,24 @@ object Wifi {
         else -> "Unusable"
     }
 
+    private val macRegex = Regex(
+        "(?i)(?<![0-9a-f])([0-9a-f]{2})[:-]?([0-9a-f]{2})[:-]?([0-9a-f]{2})[:-]?" +
+            "([0-9a-f]{2})[:-]?([0-9a-f]{2})[:-]?([0-9a-f]{2})(?![0-9a-f])",
+    )
+
+    /** Pulls every MAC address out of free text ("AA-BB-..", "aabb..", comma lists) as lower-case aa:bb:cc:dd:ee:ff. */
+    fun parseBssids(text: String): Set<String> =
+        macRegex.findAll(text).map { m -> (1..6).joinToString(":") { m.groupValues[it].lowercase() } }.toSet()
+
+    /**
+     * Heuristic for "another radio / SSID of the same physical AP": vendors usually vary only the
+     * last octet, or only the first (locally-administered) octet, between virtual BSSIDs.
+     */
+    fun likelySameAp(a: String, b: String): Boolean {
+        if (a.length != 17 || b.length != 17 || a == b) return false
+        return a.substring(0, 14) == b.substring(0, 14) || a.substring(3) == b.substring(3)
+    }
+
     /** Legend entries: label to colour. */
     val legend: List<Pair<String, Long>> = listOf(
         "≥ -50" to rssiColor(-50),

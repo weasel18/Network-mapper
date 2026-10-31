@@ -45,4 +45,19 @@ class GeoTest {
         assertEquals(1, Wifi.channel(5955))
         assertEquals("6 GHz", Wifi.band(5955))
     }
+
+    @Test
+    fun parseBssids_acceptsCommonFormats() {
+        val found = Wifi.parseBssids("AA-BB-CC-DD-EE-01, aa:bb:cc:dd:ee:02; AABBCCDDEE03 junk 12:34")
+        assertEquals(setOf("aa:bb:cc:dd:ee:01", "aa:bb:cc:dd:ee:02", "aa:bb:cc:dd:ee:03"), found)
+        assertTrue(Wifi.parseBssids("not a mac").isEmpty())
+    }
+
+    @Test
+    fun likelySameAp_matchesSiblingRadios() {
+        assertTrue(Wifi.likelySameAp("aa:bb:cc:dd:ee:01", "aa:bb:cc:dd:ee:09"))
+        assertTrue(Wifi.likelySameAp("02:bb:cc:dd:ee:01", "06:bb:cc:dd:ee:01"))
+        assertTrue(!Wifi.likelySameAp("aa:bb:cc:dd:ee:01", "aa:bb:cc:11:22:33"))
+        assertTrue(!Wifi.likelySameAp("aa:bb:cc:dd:ee:01", "aa:bb:cc:dd:ee:01"))
+    }
 }

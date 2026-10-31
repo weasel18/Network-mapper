@@ -82,4 +82,7 @@ class Repository(private val context: Context, val db: AppDatabase) {
         if (sessionId == null) wifiDao.observeAllReadings() else wifiDao.observeReadingsForSession(sessionId)
 
     suspend fun getAllReadings(): List<WifiReading> = wifiDao.getAllReadings()
+    suspend fun getNetworks(): List<NetworkSummary> = wifiDao.getNetworks()
+    suspend fun getNetworksIn(south: Double, north: Double, west: Double, east: Double): List<NetworkSummary> =
+        wifiDao.getNetworksIn(south, north, west, east)
 }

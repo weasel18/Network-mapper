@@ -9,6 +9,7 @@ import com.networkmapper.app.data.Asset
 import com.networkmapper.app.data.AssetType
 import com.networkmapper.app.data.GeoPt
 import com.networkmapper.app.data.NetPath
+import com.networkmapper.app.data.NetworkSummary
 import com.networkmapper.app.data.PathKind
 import com.networkmapper.app.data.Photo
 import com.networkmapper.app.data.WifiReading
@@ -17,6 +18,7 @@ import com.networkmapper.app.photo.PhotoStorage
 import com.networkmapper.app.survey.SurveyService
 import com.networkmapper.app.util.Fmt
 import com.networkmapper.app.util.Geo
+import com.networkmapper.app.util.Wifi
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -33,6 +35,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.File
+import kotlin.math.cos
 
 enum class TileStyle(val label: String) { STREET("Street map"), TOPO("Topographic"), SATELLITE("Satellite imagery") }
 
@@ -75,9 +78,24 @@ sealed interface HeatFilter {
     data class Bssid(val bssid: String, val ssid: String) : HeatFilter {
         override val label get() = "AP: ${ssid.ifEmpty { "(hidden)" }} [$bssid]"
     }
+
+    /** Signal of the radio(s) linked to one mapped AP / bridge pin. */
+    data class Device(val assetId: Long, val name: String, val bssids: Set<String>) : HeatFilter {
+        override val label get() = "$name • ${bssids.size} radio${if (bssids.size == 1) "" else "s"}"
+    }
 }
 
 data class HeatPoint(val lat: Double, val lon: Double, val rssi: Int)
+
+/** Coverage summary for a single-device heatmap, measured from the device's pin. */
+data class CoverageStats(
+    val spots: Int,
+    val bestRssi: Int?,
+    /** Farthest sample from the pin with a reliable signal (≥ -67 dBm). */
+    val reliableRangeM: Double?,
+    /** Farthest sample from the pin still connectable (≥ -80 dBm). */
+    val edgeRangeM: Double?,
+)
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class MainViewModel(app: Application) : AndroidViewModel(app) {
@@ -331,6 +349,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             HeatFilter.Strongest -> readings
             is HeatFilter.Ssid -> readings.filter { it.ssid == filter.ssid }
             is HeatFilter.Bssid -> readings.filter { it.bssid == filter.bssid }
+            is HeatFilter.Device -> readings.filter { it.bssid in filter.bssids }
         }
         // Collapse samples taken at the same spot (~1 m grid) to the strongest one.
         return subset
@@ -343,6 +362,55 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun showHeatmapFor(filter: HeatFilter) {
         heatFilter.value = filter
         settings.update { it.copy(showHeatmap = true) }
+    }
+
+    fun clearHeatmap() {
+        heatFilter.value = HeatFilter.Strongest
+        settings.update { it.copy(showHeatmap = false) }
+    }
+
+    val coverage: StateFlow<CoverageStats?> = combine(heatPoints, heatFilter, assets) { points, filter, all ->
+        val device = filter as? HeatFilter.Device ?: return@combine null
+        val pin = all.firstOrNull { it.id == device.assetId } ?: return@combine null
+        val origin = GeoPt(pin.latitude, pin.longitude)
+        fun range(min: Int) = points.filter { it.rssi >= min }
+            .maxOfOrNull { Geo.distanceMeters(origin, GeoPt(it.lat, it.lon)) }
+        CoverageStats(
+            spots = points.size,
+            bestRssi = points.maxOfOrNull { it.rssi },
+            reliableRangeM = range(-67),
+            edgeRangeM = range(-80),
+        )
+    }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    /** BSSIDs stored on a pin (AP, bridge or router), or empty if none / not a radio type. */
+    fun linkedBssids(asset: Asset): Set<String> =
+        asset.type.bssidField?.let { asset.attributes[it] }?.let(Wifi::parseBssids) ?: emptySet()
+
+    /** Shows only this device's signal on the map. Returns false when no radio is linked yet. */
+    fun showDeviceSignal(asset: Asset): Boolean {
+        val bssids = linkedBssids(asset)
+        if (bssids.isEmpty()) return false
+        showHeatmapFor(HeatFilter.Device(asset.id, asset.name, bssids))
+        return true
+    }
+
+    /** Networks recorded within ~[radiusM] of the pin, strongest first (falls back to everything recorded). */
+    suspend fun networksNear(asset: Asset, radiusM: Double = 75.0): List<NetworkSummary> {
+        val dLat = radiusM / 111_320.0
+        val dLon = dLat / cos(Math.toRadians(asset.latitude)).coerceAtLeast(0.01)
+        val near = repo.getNetworksIn(asset.latitude - dLat, asset.latitude + dLat, asset.longitude - dLon, asset.longitude + dLon)
+        return near.ifEmpty { repo.getNetworks() }
+    }
+
+    /** Saves the chosen radios onto the pin and switches the heatmap to them. */
+    fun linkRadios(asset: Asset, bssids: Set<String>) = viewModelScope.launch {
+        val field = asset.type.bssidField ?: return@launch
+        val fresh = repo.getAsset(asset.id) ?: return@launch
+        val attrs = LinkedHashMap(fresh.attributes)
+        if (bssids.isEmpty()) attrs.remove(field) else attrs[field] = bssids.sorted().joinToString(", ")
+        repo.updateAsset(fresh.copy(attributes = attrs))
+        if (bssids.isEmpty()) clearHeatmap() else showHeatmapFor(HeatFilter.Device(fresh.id, fresh.name, bssids))
     }
 
     // ---------- Survey ----------

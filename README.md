@@ -19,6 +19,9 @@ poles and demarcs. It also maps Wi-Fi signal strength by GPS and attaches GPS-ta
 - **Wi-Fi survey**: a foreground service logs every scan result (SSID, BSSID, RSSI, channel) with the GPS fix as you
   walk. It also logs the connected AP's RSSI every 2 m, which isn't affected by scan throttling. The heatmap can show the
   strongest signal at each spot, one SSID across all its APs, or a single AP.
+  Tap an AP, bridge or router pin and choose **Signal map** to see only that device's coverage, with reliable
+  (≥ -67 dBm) and usable (≥ -80 dBm) range measured from the pin. The first time, link the pin to its radio(s); the
+  app lists the networks heard closest to the pin and auto-selects the other bands/SSIDs of the same box.
 - **Export**: KMZ for Google Earth (with embedded photos), or a ZIP with GeoJSON, KML, Wi-Fi CSV/GeoJSON and photos
   for QGIS/ArcGIS.
 

@@ -137,4 +137,17 @@ interface WifiDao {
             "FROM wifi_readings GROUP BY bssid ORDER BY bestRssi DESC",
     )
     fun observeNetworks(): Flow<List<NetworkSummary>>
+
+    @Query(
+        "SELECT bssid, ssid, MAX(rssi) AS bestRssi, COUNT(*) AS samples, MAX(frequency) AS frequency " +
+            "FROM wifi_readings GROUP BY bssid ORDER BY bestRssi DESC",
+    )
+    suspend fun getNetworks(): List<NetworkSummary>
+
+    @Query(
+        "SELECT bssid, ssid, MAX(rssi) AS bestRssi, COUNT(*) AS samples, MAX(frequency) AS frequency " +
+            "FROM wifi_readings WHERE latitude BETWEEN :south AND :north AND longitude BETWEEN :west AND :east " +
+            "GROUP BY bssid ORDER BY bestRssi DESC",
+    )
+    suspend fun getNetworksIn(south: Double, north: Double, west: Double, east: Double): List<NetworkSummary>
 }
