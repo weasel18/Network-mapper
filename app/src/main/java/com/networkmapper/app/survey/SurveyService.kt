@@ -15,6 +15,7 @@ import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import com.networkmapper.app.NetworkMapperApp
 import com.networkmapper.app.R
+import com.networkmapper.app.data.DEFAULT_SITE_ID
 import com.networkmapper.app.data.WifiReading
 import com.networkmapper.app.location.LocationTracker
 import com.networkmapper.app.ui.MainActivity
@@ -44,12 +45,12 @@ class SurveyService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> stopSurvey()
-            else -> startSurvey(intent?.getStringExtra(EXTRA_NAME))
+            else -> startSurvey(intent?.getStringExtra(EXTRA_NAME), intent?.getLongExtra(EXTRA_SITE, DEFAULT_SITE_ID) ?: DEFAULT_SITE_ID)
         }
         return START_NOT_STICKY
     }
 
-    private fun startSurvey(requestedName: String?) {
+    private fun startSurvey(requestedName: String?, siteId: Long) {
         try {
             ServiceCompat.startForeground(
                 this,
@@ -71,7 +72,7 @@ class SurveyService : Service() {
         val name = requestedName?.takeIf { it.isNotBlank() } ?: "Survey ${Fmt.dateTime(System.currentTimeMillis())}"
 
         job = scope.launch {
-            val sessionId = repo.startSession(name)
+            val sessionId = repo.startSession(name, siteId)
             SurveyState.started(sessionId)
             var lastLoc: Location? = null
             var lastConnectedLoc: Location? = null
@@ -185,11 +186,13 @@ class SurveyService : Service() {
         private const val ACTION_START = "com.networkmapper.app.survey.START"
         private const val ACTION_STOP = "com.networkmapper.app.survey.STOP"
         private const val EXTRA_NAME = "name"
+        private const val EXTRA_SITE = "site"
 
-        fun start(context: Context, name: String) {
+        fun start(context: Context, name: String, siteId: Long) {
             val intent = Intent(context, SurveyService::class.java)
                 .setAction(ACTION_START)
                 .putExtra(EXTRA_NAME, name)
+                .putExtra(EXTRA_SITE, siteId)
             ContextCompat.startForegroundService(context, intent)
         }
 

@@ -78,8 +78,9 @@ fun WifiScreen(vm: MainViewModel, onBack: () -> Unit, onShowMap: () -> Unit) {
     val readings by SurveyState.readings.collectAsStateWithLifecycle()
     val surveyScan by SurveyState.lastScan.collectAsStateWithLifecycle()
     val interval by SurveyState.scanIntervalMs.collectAsStateWithLifecycle()
-    val sessions by vm.repo.sessions.collectAsStateWithLifecycle(emptyList())
-    val networks by vm.repo.networks.collectAsStateWithLifecycle(emptyList())
+    val sessions by vm.sessions.collectAsStateWithLifecycle()
+    val networks by vm.networks.collectAsStateWithLifecycle()
+    val site by vm.currentSite.collectAsStateWithLifecycle()
     val heatSession by vm.heatSession.collectAsStateWithLifecycle()
     val heatFilter by vm.heatFilter.collectAsStateWithLifecycle()
 
@@ -105,7 +106,12 @@ fun WifiScreen(vm: MainViewModel, onBack: () -> Unit, onShowMap: () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Wi-Fi survey") },
+                title = {
+                    Column {
+                        Text("Wi-Fi survey")
+                        site?.let { Text(it.name, style = MaterialTheme.typography.labelMedium) }
+                    }
+                },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
                 actions = {
                     IconButton(onClick = {

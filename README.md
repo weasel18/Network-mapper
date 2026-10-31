@@ -6,6 +6,8 @@ poles and demarcs. It also maps Wi-Fi signal strength by GPS and attaches GPS-ta
 
 ## Features
 
+- **Sites**: keep each job or location separate. Every site has its own pins, paths, photos and Wi-Fi surveys. Tap the
+  site name at the top of the map to switch sites, or to create, rename or delete them. Data saves automatically.
 - **Map** (OpenStreetMap, topo, or Esri satellite imagery; no API key needed). Tiles you've viewed are cached for offline use.
 - **Pins**: drop one at your GPS position (+ button) or long-press anywhere. There are 11 asset types, each with
   suggested detail fields (e.g. splice count, tray count, SSID/MAC/IP, azimuth/tilt, port count), plus custom fields,
@@ -28,8 +30,12 @@ poles and demarcs. It also maps Wi-Fi signal strength by GPS and attaches GPS-ta
   Tap an AP, bridge or router pin and choose **Signal map** to see only that device's coverage, with reliable
   (≥ -67 dBm) and usable (≥ -80 dBm) range measured from the pin. The first time, link the pin to its radio(s); the
   app lists the networks heard closest to the pin and auto-selects the other bands/SSIDs of the same box.
-- **Export**: KMZ for Google Earth (with embedded photos), or a ZIP with GeoJSON, KML, Wi-Fi CSV/GeoJSON and photos
-  for QGIS/ArcGIS.
+- **Export / import sites**: choose which sites to export (all by default).
+  - A *Full backup ZIP* holds everything: sites, pins, paths, colours, photos with captions, and Wi-Fi surveys, plus
+    GeoJSON, KML and CSV for QGIS/ArcGIS/Excel.
+  - A *KMZ* is for viewing in Google Earth.
+  - When importing, choose which sites in the file to load and whether each becomes a new site or merges into an
+    existing one. Duplicates are skipped. Older single-site backups import too.
 
 ## Build
 
@@ -54,7 +60,7 @@ keeps your data. Builds made before version 1.1 used a random key per build and 
 1. In the old app: **Export & data → Full data ZIP**, and save or send the ZIP somewhere you can open it on the phone
    (Drive, Files, email). Finish any route you're drawing first.
 2. Install the new APK. It installs **alongside** the old app.
-3. In the new app: **Export & data → Restore from backup ZIP…** and pick the file.
+3. In the new app: **Export & data → Import / restore sites…**, pick the file, and choose the site to import into.
 4. Once everything is there, uninstall the old copy.
 
 The committed key is fine for an internal, sideloaded tool. Use a private release key before distributing more widely.

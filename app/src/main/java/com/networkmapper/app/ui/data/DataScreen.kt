@@ -2,30 +2,22 @@
 
 package com.networkmapper.app.ui.data
 
-import android.widget.Toast
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Public
-import androidx.compose.material.icons.filled.Restore
-import androidx.compose.material.icons.filled.Save
-import androidx.compose.material.icons.filled.Share
-import androidx.compose.material3.AlertDialog
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Map
+import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -39,85 +31,31 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.networkmapper.app.BuildConfig
 import com.networkmapper.app.data.AssetType
 import com.networkmapper.app.data.PathKind
-import com.networkmapper.app.BuildConfig
-import com.networkmapper.app.export.Exporter
-import com.networkmapper.app.export.Importer
 import com.networkmapper.app.ui.MainViewModel
 import com.networkmapper.app.ui.components.ConfirmDialog
-import com.networkmapper.app.util.Fmt
+import com.networkmapper.app.ui.site.ExportSitesDialog
+import com.networkmapper.app.ui.site.rememberSiteImport
 import com.networkmapper.app.util.Geo
-import kotlinx.coroutines.launch
-import java.io.File
 
 @Composable
-fun DataScreen(vm: MainViewModel, onBack: () -> Unit) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
+fun DataScreen(vm: MainViewModel, onBack: () -> Unit, onOpenSites: () -> Unit) {
     val assets by vm.assets.collectAsStateWithLifecycle()
     val paths by vm.paths.collectAsStateWithLifecycle()
-    val photoCount by vm.repo.photoCount.collectAsStateWithLifecycle(0)
-    val readingCount by vm.repo.readingCount.collectAsStateWithLifecycle(0)
-    var busy by remember { mutableStateOf(false) }
+    val photoCount by vm.sitePhotoCount.collectAsStateWithLifecycle()
+    val readingCount by vm.siteReadingCount.collectAsStateWithLifecycle()
+    val site by vm.currentSite.collectAsStateWithLifecycle()
+    val sites by vm.sites.collectAsStateWithLifecycle()
     var confirmClearWifi by remember { mutableStateOf(false) }
-    var restoreResult by remember { mutableStateOf<String?>(null) }
-    var busyLabel by remember { mutableStateOf("Preparing export…") }
-
-    // Save a full backup straight to a folder the user picks (Downloads, Drive, SD card…).
-    val saveBackup = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
-        if (uri == null || busy) return@rememberLauncherForActivityResult
-        busy = true
-        busyLabel = "Saving backup…"
-        scope.launch {
-            try {
-                Exporter.saveTo(context, Exporter.exportZip(context, vm.repo), uri)
-                Toast.makeText(context, "Backup saved", Toast.LENGTH_LONG).show()
-            } catch (e: Exception) {
-                Toast.makeText(context, "Backup failed: ${e.message}", Toast.LENGTH_LONG).show()
-            } finally {
-                busy = false
-            }
-        }
-    }
-
-    val restore = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri == null || busy) return@rememberLauncherForActivityResult
-        busy = true
-        busyLabel = "Restoring backup…"
-        scope.launch {
-            restoreResult = try {
-                Importer.importZip(context, vm.repo, uri).summary
-            } catch (e: Exception) {
-                "Restore failed: ${e.message}"
-            } finally {
-                busy = false
-            }
-        }
-    }
-
-    fun export(block: suspend () -> File) {
-        if (busy) return
-        busy = true
-        busyLabel = "Preparing export…"
-        scope.launch {
-            try {
-                Exporter.share(context, block())
-            } catch (e: Exception) {
-                Toast.makeText(context, "Export failed: ${e.message}", Toast.LENGTH_LONG).show()
-            } finally {
-                busy = false
-            }
-        }
-    }
+    var showExport by remember { mutableStateOf(false) }
+    val startImport = rememberSiteImport(vm)
 
     Scaffold(
         topBar = {
@@ -137,8 +75,7 @@ fun DataScreen(vm: MainViewModel, onBack: () -> Unit) {
         ) {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("Summary", style = MaterialTheme.typography.titleMedium)
-                    Text("App version ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodySmall)
+                    Text("Site: ${site?.name ?: "…"}", style = MaterialTheme.typography.titleMedium)
                     Text("${assets.size} pins • ${paths.size} paths • $photoCount photos • $readingCount Wi-Fi readings")
                     AssetType.entries.forEach { t ->
                         val n = assets.count { it.type == t }
@@ -151,68 +88,45 @@ fun DataScreen(vm: MainViewModel, onBack: () -> Unit) {
                             Text("  ${k.label}: ${list.size} (${Geo.formatDistance(len)})", style = MaterialTheme.typography.bodySmall)
                         }
                     }
+                    TextButton(onClick = onOpenSites) { Text("${sites.size} site(s) on this phone – manage sites") }
+                    Text("App version ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodySmall)
                 }
             }
 
-            Text("Export", style = MaterialTheme.typography.titleMedium)
-            Button(onClick = { export { Exporter.exportKmz(context, vm.repo) } }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Default.Public, null)
+            Text("Export & import", style = MaterialTheme.typography.titleMedium)
+            Button(onClick = { showExport = true }, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Default.Upload, null)
                 Spacer(Modifier.width(8.dp))
-                Text("KMZ for Google Earth (pins, paths, photos)")
+                Text("Export sites… (backup ZIP or Google Earth KMZ)")
             }
-            Button(onClick = { export { Exporter.exportZip(context, vm.repo) } }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Default.Share, null)
+            OutlinedButton(onClick = startImport, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Default.Download, null)
                 Spacer(Modifier.width(8.dp))
-                Text("Full data ZIP (GeoJSON, KML, Wi-Fi CSV, photos)")
-            }
-            if (busy) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                    Spacer(Modifier.width(8.dp))
-                    Text(busyLabel)
-                }
+                Text("Import / restore sites…")
             }
             Text(
-                "GeoJSON opens in QGIS, ArcGIS and most web maps. The Wi-Fi CSV has one row per sample " +
-                    "(time, lat/lon, SSID, BSSID, RSSI, channel) for coverage reports.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-
-            Text("Backup & restore", style = MaterialTheme.typography.titleMedium)
-            Button(
-                onClick = { saveBackup.launch("network_mapper_backup_${Fmt.fileStamp()}.zip") },
-                enabled = !busy,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Icon(Icons.Default.Save, null)
-                Spacer(Modifier.width(8.dp))
-                Text("Save backup to device…")
-            }
-            OutlinedButton(
-                onClick = { restore.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream")) },
-                enabled = !busy,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Icon(Icons.Default.Restore, null)
-                Spacer(Modifier.width(8.dp))
-                Text("Restore from backup ZIP…")
-            }
-            Text(
-                "A backup is the same as the Full data ZIP. Restoring adds its pins, paths, photos and Wi-Fi " +
-                    "surveys to what's on this device and skips anything already here, so it's safe to run twice.",
+                "Export: pick which sites to include (all by default). A backup ZIP holds everything – sites, pins, " +
+                    "paths, colours, photos and Wi-Fi surveys – plus GeoJSON, KML and CSV for QGIS/ArcGIS/Excel.\n" +
+                    "Import: choose which sites from the file to load and whether each becomes a new site or merges " +
+                    "into an existing one. Older single-site backups work too.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
             Text("Manage", style = MaterialTheme.typography.titleMedium)
+            OutlinedButton(onClick = onOpenSites, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Default.Map, null)
+                Spacer(Modifier.width(8.dp))
+                Text("Sites – create, open, rename, delete")
+            }
             OutlinedButton(onClick = { confirmClearWifi = true }, modifier = Modifier.fillMaxWidth()) {
-                Text("Delete all Wi-Fi survey data")
+                Text("Delete this site's Wi-Fi survey data")
             }
 
             Text("Tips", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Text(
-                "• Long-press the map to drop a pin anywhere; the + button drops one at your GPS position.\n" +
+                "• Tap the site name at the top of the map to switch sites or create a new one.\n" +
+                    "• Long-press the map to drop a pin anywhere; the + button drops one at your GPS position.\n" +
                     "• The camera button creates a photo pin at your location; photos are GPS-tagged in EXIF too.\n" +
                     "• Use the path tool to draw fiber runs: tap pins to snap the ends to junctions or splices, " +
                     "or turn on Auto-track and walk the route. Tap Finish to save.\n" +
@@ -227,21 +141,15 @@ fun DataScreen(vm: MainViewModel, onBack: () -> Unit) {
         }
     }
 
-    restoreResult?.let { msg ->
-        AlertDialog(
-            onDismissRequest = { restoreResult = null },
-            title = { Text("Restore") },
-            text = { Text(msg) },
-            confirmButton = { TextButton(onClick = { restoreResult = null }) { Text("OK") } },
-        )
-    }
+    if (showExport) ExportSitesDialog(vm, onDismiss = { showExport = false })
 
     if (confirmClearWifi) {
         ConfirmDialog(
             title = "Delete Wi-Fi data?",
-            text = "All $readingCount survey readings will be removed. Pins, paths and photos are not affected.",
+            text = "All $readingCount survey readings in “${site?.name ?: "this site"}” will be removed. " +
+                "Pins, paths, photos and other sites are not affected.",
             confirm = "Delete",
-            onConfirm = { scope.launch { vm.repo.deleteAllSurveys() } },
+            onConfirm = { vm.deleteSurveysForCurrentSite() },
             onDismiss = { confirmClearWifi = false },
         )
     }

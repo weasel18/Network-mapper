@@ -1,5 +1,6 @@
 package com.networkmapper.app.data
 
+import androidx.room.ColumnInfo
 import androidx.room.Embedded
 import androidx.room.Entity
 import androidx.room.ForeignKey
@@ -63,9 +64,28 @@ enum class AssetType(
     OTHER("Other / Photo pin", 0xFF757575, "?", emptyList()),
 }
 
+/** A job / location. Every pin, path and Wi-Fi survey belongs to exactly one site. */
+@Entity(tableName = "sites")
+data class Site(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val name: String,
+    val notes: String = "",
+    val createdAt: Long = System.currentTimeMillis(),
+)
+
+data class SiteWithCounts(
+    @Embedded val site: Site,
+    val pins: Int,
+    val paths: Int,
+    val surveys: Int,
+)
+
+/** Site that existing (pre-sites) data is moved into, and that a fresh install starts with. */
+const val DEFAULT_SITE_ID = 1L
+
 val ASSET_STATUSES = listOf("Active", "Planned", "Under construction", "Inactive", "Damaged", "Abandoned")
 
-@Entity(tableName = "assets")
+@Entity(tableName = "assets", indices = [Index("siteId")])
 data class Asset(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val type: AssetType,
@@ -79,6 +99,7 @@ data class Asset(
     val attributes: Map<String, String> = emptyMap(),
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
+    @ColumnInfo(defaultValue = "1") val siteId: Long = DEFAULT_SITE_ID,
 )
 
 fun Asset.point(): GeoPt = GeoPt(latitude, longitude)
@@ -108,7 +129,7 @@ enum class PathKind(
     COPPER("Copper / Ethernet", 0xFF2E7D32, false, listOf("Cable type", "Pairs", "Install date")),
 }
 
-@Entity(tableName = "paths")
+@Entity(tableName = "paths", indices = [Index("siteId")])
 data class NetPath(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val kind: PathKind,
@@ -125,6 +146,7 @@ data class NetPath(
     val endAssetId: Long? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
+    @ColumnInfo(defaultValue = "1") val siteId: Long = DEFAULT_SITE_ID,
 )
 
 @Entity(
@@ -147,12 +169,13 @@ data class Photo(
     val takenAt: Long = System.currentTimeMillis(),
 )
 
-@Entity(tableName = "survey_sessions")
+@Entity(tableName = "survey_sessions", indices = [Index("siteId")])
 data class SurveySession(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val name: String,
     val startedAt: Long = System.currentTimeMillis(),
     val endedAt: Long? = null,
+    @ColumnInfo(defaultValue = "1") val siteId: Long = DEFAULT_SITE_ID,
 )
 
 data class SessionWithCount(

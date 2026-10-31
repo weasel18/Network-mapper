@@ -35,6 +35,7 @@ import com.networkmapper.app.ui.list.AssetListScreen
 import com.networkmapper.app.ui.map.MapScreen
 import com.networkmapper.app.ui.path.PathEditScreen
 import com.networkmapper.app.ui.photo.PhotoScreen
+import com.networkmapper.app.ui.site.SitesScreen
 import com.networkmapper.app.ui.theme.NetworkMapperTheme
 import com.networkmapper.app.ui.wifi.WifiScreen
 
@@ -72,6 +73,7 @@ private object Routes {
     const val LIST = "list"
     const val WIFI = "wifi"
     const val DATA = "data"
+    const val SITES = "sites"
     const val ASSET = "asset/{id}"
     const val PATH = "path/{id}"
     const val PHOTO = "photo/{id}"
@@ -132,6 +134,7 @@ fun AppRoot() {
                 onOpenList = { nav.navigate(Routes.LIST) },
                 onOpenWifi = { nav.navigate(Routes.WIFI) },
                 onOpenData = { nav.navigate(Routes.DATA) },
+                onOpenSites = { nav.navigate(Routes.SITES) },
             )
         }
         composable(Routes.LIST) {
@@ -147,7 +150,10 @@ fun AppRoot() {
             WifiScreen(vm = vm, onBack = { nav.popBackStack() }, onShowMap = { nav.backToMap() })
         }
         composable(Routes.DATA) {
-            DataScreen(vm = vm, onBack = { nav.popBackStack() })
+            DataScreen(vm = vm, onBack = { nav.popBackStack() }, onOpenSites = { nav.navigate(Routes.SITES) })
+        }
+        composable(Routes.SITES) {
+            SitesScreen(vm = vm, onBack = { nav.popBackStack() }, onOpened = { nav.backToMap() })
         }
         composable(Routes.ASSET, arguments = listOf(navArgument("id") { type = NavType.LongType })) { entry ->
             val id = entry.arguments?.getLong("id") ?: 0L

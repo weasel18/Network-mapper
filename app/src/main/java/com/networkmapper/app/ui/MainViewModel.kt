@@ -6,13 +6,18 @@ import android.location.Location
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.networkmapper.app.NetworkMapperApp
+import com.networkmapper.app.data.AppDatabase
 import com.networkmapper.app.data.Asset
 import com.networkmapper.app.data.AssetType
+import com.networkmapper.app.data.DEFAULT_SITE_ID
 import com.networkmapper.app.data.GeoPt
 import com.networkmapper.app.data.NetPath
 import com.networkmapper.app.data.NetworkSummary
 import com.networkmapper.app.data.PathKind
 import com.networkmapper.app.data.Photo
+import com.networkmapper.app.data.SessionWithCount
+import com.networkmapper.app.data.Site
+import com.networkmapper.app.data.SiteWithCounts
 import com.networkmapper.app.data.WifiReading
 import com.networkmapper.app.location.LocationTracker
 import com.networkmapper.app.photo.PhotoStorage
@@ -41,6 +46,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import kotlin.math.cos
+import kotlin.math.log2
 
 enum class TileStyle(val label: String) { STREET("Street map"), TOPO("Topographic"), SATELLITE("Satellite imagery") }
 
@@ -157,9 +163,111 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun isGpsEnabled() = tracker.isGpsEnabled()
 
-    // ---------- Data ----------
-    val assets: StateFlow<List<Asset>> = repo.assets.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
-    val paths: StateFlow<List<NetPath>> = repo.paths.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    // ---------- Sites ----------
+    private val sitePrefs = app.getSharedPreferences("sites", Context.MODE_PRIVATE)
+
+    /** The site whose pins, paths and surveys are shown and edited. */
+    val currentSiteId = MutableStateFlow(sitePrefs.getLong("current", DEFAULT_SITE_ID))
+    val currentSite: StateFlow<Site?> = currentSiteId.flatMapLatest { repo.observeSite(it) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+    val sites: StateFlow<List<SiteWithCounts>> = repo.sitesWithCounts
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    init {
+        viewModelScope.launch { ensureValidSite() }
+    }
+
+    /** Makes sure the remembered site still exists (it may have been deleted), creating one if needed. */
+    private suspend fun ensureValidSite() {
+        if (repo.getSite(currentSiteId.value) != null) return
+        val fallback = repo.getSites().firstOrNull()?.id ?: repo.insertSite(Site(name = AppDatabase.DEFAULT_SITE_NAME))
+        setCurrentSite(fallback)
+    }
+
+    private fun setCurrentSite(id: Long) {
+        currentSiteId.value = id
+        sitePrefs.edit().putLong("current", id).apply()
+    }
+
+    /**
+     * Opens another site. Refused (returns false) while a route is being drawn, so the route
+     * can't end up in the wrong site.
+     */
+    fun switchSite(id: Long): Boolean {
+        if (draft.value != null) return false
+        if (id == currentSiteId.value) return true
+        pinMove.value = null
+        selected.value = null
+        heatFilter.value = HeatFilter.Strongest
+        heatSession.value = null
+        setCurrentSite(id)
+        viewModelScope.launch { fitCameraToSite(id) }
+        return true
+    }
+
+    suspend fun createSite(name: String, notes: String = ""): Long =
+        repo.insertSite(Site(name = name.trim().ifEmpty { "New site" }, notes = notes.trim()))
+
+    fun renameSite(site: Site, name: String, notes: String) = viewModelScope.launch {
+        repo.updateSite(site.copy(name = name.trim().ifEmpty { site.name }, notes = notes.trim()))
+    }
+
+    /** Deletes a site with all its data; if it was open, another site (or a fresh one) is opened. */
+    suspend fun deleteSite(id: Long) {
+        val wasCurrent = id == currentSiteId.value
+        if (wasCurrent) {
+            draft.value = null
+            pinMove.value = null
+            selected.value = null
+            heatFilter.value = HeatFilter.Strongest
+            heatSession.value = null
+        }
+        repo.deleteSite(id)
+        if (wasCurrent) {
+            val next = repo.getSites().firstOrNull()?.id ?: repo.insertSite(Site(name = AppDatabase.DEFAULT_SITE_NAME))
+            setCurrentSite(next)
+            fitCameraToSite(next)
+        }
+    }
+
+    /** Centres / zooms the remembered camera on a site's pins and paths. */
+    private suspend fun fitCameraToSite(id: Long) {
+        val pts = repo.getAssetsForSite(id).map { GeoPt(it.latitude, it.longitude) } +
+            repo.getPathsForSite(id).flatMap { it.points }
+        if (pts.isEmpty()) return
+        val south = pts.minOf { it.lat }
+        val north = pts.maxOf { it.lat }
+        val west = pts.minOf { it.lon }
+        val east = pts.maxOf { it.lon }
+        val center = GeoPt((south + north) / 2, (west + east) / 2)
+        // Rough fit for a phone-sized map (~1.3 tiles wide at DPI-scaled tiles), with margin.
+        val lonSpan = (east - west).coerceAtLeast(1e-6)
+        val latSpan = ((north - south) / cos(Math.toRadians(center.lat)).coerceAtLeast(0.01)).coerceAtLeast(1e-6)
+        val zoom = minOf(log2(360.0 * 1.0 / lonSpan), log2(360.0 * 1.4 / latSpan)).coerceIn(3.0, 19.0)
+        cameraZoom = zoom
+        cameraCenter = center
+        cameraInitialized = true
+        focusRequest.value = center
+    }
+
+    // ---------- Data (always for the current site) ----------
+    val assets: StateFlow<List<Asset>> = currentSiteId.flatMapLatest { repo.assets(it) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val paths: StateFlow<List<NetPath>> = currentSiteId.flatMapLatest { repo.paths(it) }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val sessions: StateFlow<List<SessionWithCount>> = currentSiteId.flatMapLatest { repo.sessions(it) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val networks: StateFlow<List<NetworkSummary>> = currentSiteId.flatMapLatest { repo.networks(it) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val sitePhotoCount: StateFlow<Int> = currentSiteId.flatMapLatest { repo.photoCount(it) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
+    val siteReadingCount: StateFlow<Int> = currentSiteId.flatMapLatest { repo.readingCount(it) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
+
+    fun deleteSurveysForCurrentSite() = viewModelScope.launch {
+        heatSession.value = null
+        repo.deleteSurveysForSite(currentSiteId.value)
+    }
 
     // ---------- Map state ----------
     val settings = MutableStateFlow(MapSettings())
@@ -215,6 +323,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 longitude = pt.lon,
                 accuracy = accuracy,
                 altitude = altitude,
+                siteId = currentSiteId.value,
             ),
         )
     }
@@ -283,6 +392,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 longitude = pt.lon,
                 accuracy = accuracy,
                 altitude = altitude,
+                siteId = currentSiteId.value,
             ),
         )
         repo.insertPhoto(
@@ -498,7 +608,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             } else {
                 "${d.kind.label} ${Fmt.dateTime(System.currentTimeMillis())}"
             }
-            repo.insertPath(NetPath(kind = d.kind, name = name, points = pts, startAssetId = startId, endAssetId = endId))
+            repo.insertPath(
+                NetPath(
+                    kind = d.kind, name = name, points = pts, startAssetId = startId, endAssetId = endId,
+                    siteId = currentSiteId.value,
+                ),
+            )
         }
         draft.value = null
         return id
@@ -515,7 +630,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             if (!show) {
                 flowOf(emptyList())
             } else {
-                combine(heatSession.flatMapLatest { repo.readings(it) }, heatFilter) { readings, filter ->
+                val readings = combine(currentSiteId, heatSession) { site, session -> site to session }
+                    .flatMapLatest { (site, session) -> repo.readings(site, session) }
+                combine(readings, heatFilter) { readings, filter ->
                     toHeatPoints(readings, filter)
                 }
             }
@@ -578,8 +695,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     suspend fun networksNear(asset: Asset, radiusM: Double = 75.0): List<NetworkSummary> {
         val dLat = radiusM / 111_320.0
         val dLon = dLat / cos(Math.toRadians(asset.latitude)).coerceAtLeast(0.01)
-        val near = repo.getNetworksIn(asset.latitude - dLat, asset.latitude + dLat, asset.longitude - dLon, asset.longitude + dLon)
-        return near.ifEmpty { repo.getNetworks() }
+        val near = repo.getNetworksIn(
+            asset.siteId, asset.latitude - dLat, asset.latitude + dLat, asset.longitude - dLon, asset.longitude + dLon,
+        )
+        return near.ifEmpty { repo.getNetworks(asset.siteId) }
     }
 
     /** Saves the chosen radios onto the pin and switches the heatmap to them. */
@@ -593,6 +712,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // ---------- Survey ----------
-    fun startSurvey(name: String) = SurveyService.start(getApplication<Application>(), name)
+    fun startSurvey(name: String) = SurveyService.start(getApplication<Application>(), name, currentSiteId.value)
     fun stopSurvey() = SurveyService.stop(getApplication<Application>())
 }

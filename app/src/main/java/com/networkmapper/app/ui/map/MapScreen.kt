@@ -32,6 +32,7 @@ import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AddLocationAlt
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
@@ -133,6 +134,7 @@ fun MapScreen(
     onOpenList: () -> Unit,
     onOpenWifi: () -> Unit,
     onOpenData: () -> Unit,
+    onOpenSites: () -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -145,6 +147,7 @@ fun MapScreen(
     val location by vm.location.collectAsStateWithLifecycle()
     val selected by vm.selected.collectAsStateWithLifecycle()
     val pinMove by vm.pinMove.collectAsStateWithLifecycle()
+    val currentSite by vm.currentSite.collectAsStateWithLifecycle()
     val heatFilter by vm.heatFilter.collectAsStateWithLifecycle()
     val coverage by vm.coverage.collectAsStateWithLifecycle()
     val surveyRunning by SurveyState.running.collectAsStateWithLifecycle()
@@ -313,7 +316,23 @@ fun MapScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Network Mapper") },
+                title = {
+                    // Site switcher: tap the name to open, create or manage sites.
+                    Row(
+                        Modifier.clickable(onClick = onOpenSites),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f, fill = false)) {
+                            Text(
+                                currentSite?.name ?: "Network Mapper",
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text("Site • tap to switch", style = MaterialTheme.typography.labelSmall)
+                        }
+                        Icon(Icons.Default.ArrowDropDown, "Switch site")
+                    }
+                },
                 actions = {
                     IconButton(onClick = { showLayers = true }) { Icon(Icons.Default.Layers, "Layers") }
                     IconButton(onClick = onOpenList) { Icon(Icons.AutoMirrored.Filled.List, "List") }
@@ -321,6 +340,10 @@ fun MapScreen(
                     Box {
                         IconButton(onClick = { showMenu = true }) { Icon(Icons.Default.MoreVert, "More") }
                         DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                            DropdownMenuItem(text = { Text("Sites") }, onClick = {
+                                showMenu = false
+                                onOpenSites()
+                            })
                             DropdownMenuItem(text = { Text("Export & data") }, onClick = {
                                 showMenu = false
                                 onOpenData()
