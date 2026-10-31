@@ -100,6 +100,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.networkmapper.app.data.Asset
 import com.networkmapper.app.data.AssetType
+import com.networkmapper.app.data.Coverage
 import com.networkmapper.app.data.GeoPt
 import com.networkmapper.app.data.NetPath
 import com.networkmapper.app.survey.SurveyState
@@ -1020,6 +1021,9 @@ private fun AssetCard(
                     fontWeight = FontWeight.Medium,
                 )
             }
+            Coverage.read(asset.attributes)?.let { p ->
+                Text("Coverage: ${p.summary()}", style = MaterialTheme.typography.bodySmall)
+            }
             if (asset.notes.isNotBlank()) {
                 Text(asset.notes, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
@@ -1131,6 +1135,7 @@ private fun LayersDialog(
                 CheckRow("Pins", settings.showAssets) { onChange(settings.copy(showAssets = it)) }
                 CheckRow("Fiber / link paths", settings.showPaths) { onChange(settings.copy(showPaths = it)) }
                 CheckRow("Wi-Fi signal heatmap", settings.showHeatmap) { onChange(settings.copy(showHeatmap = it)) }
+                CheckRow("AP coverage patterns", settings.showPatterns) { onChange(settings.copy(showPatterns = it)) }
                 HorizontalDivider(Modifier.padding(vertical = 6.dp))
                 Text("Pin types", style = MaterialTheme.typography.titleSmall)
                 AssetType.entries.forEach { t ->

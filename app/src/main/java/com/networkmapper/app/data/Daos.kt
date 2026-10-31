@@ -235,6 +235,12 @@ interface WifiDao {
     suspend fun strongestReading(siteId: Long, bssids: List<String>): WifiReading?
 
     @Query(
+        "SELECT r.* FROM wifi_readings r INNER JOIN survey_sessions s ON r.sessionId = s.id " +
+            "WHERE s.siteId = :siteId AND r.bssid IN (:bssids)",
+    )
+    suspend fun readingsForBssids(siteId: Long, bssids: List<String>): List<WifiReading>
+
+    @Query(
         "SELECT MAX(r.timestamp) FROM wifi_readings r INNER JOIN survey_sessions s ON r.sessionId = s.id " +
             "WHERE s.siteId = :siteId AND r.latitude BETWEEN :south AND :north AND r.longitude BETWEEN :west AND :east",
     )

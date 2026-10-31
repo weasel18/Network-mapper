@@ -55,6 +55,7 @@ import com.networkmapper.app.NetworkMapperApp
 import com.networkmapper.app.data.ASSET_STATUSES
 import com.networkmapper.app.data.Asset
 import com.networkmapper.app.data.AssetType
+import com.networkmapper.app.data.Coverage
 import com.networkmapper.app.data.Photo
 import com.networkmapper.app.ui.ApCandidate
 import com.networkmapper.app.ui.MainViewModel
@@ -325,6 +326,18 @@ fun AssetEditScreen(
                         ).show()
                     },
                 )
+                val linked = Wifi.parseBssids(f.attributes[bssidField] ?: "")
+                PatternEditor(
+                    type = f.type,
+                    attrs = f.attributes,
+                    lat = latD,
+                    lon = lonD,
+                    hasLinkedRadios = linked.isNotEmpty(),
+                    onChange = { m -> vm.update { it.copy(attributes = m) } },
+                    surveyedRange = {
+                        if (latD == null || lonD == null) null to null else mainVm.surveyedRange(linked, latD, lonD)
+                    },
+                )
             }
             OutlinedTextField(
                 value = f.name,
@@ -412,6 +425,8 @@ fun AssetEditScreen(
                 suggested = f.type.suggestedFields,
                 values = f.attributes,
                 onChange = { m -> vm.update { it.copy(attributes = m) } },
+                // The pattern editor above owns these keys while a pattern is set.
+                hiddenKeys = if (f.type.bssidField != null && Coverage.read(f.attributes) != null) Coverage.keys else emptySet(),
             )
             OutlinedTextField(
                 value = f.notes,

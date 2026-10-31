@@ -278,9 +278,11 @@ fun AttributesEditor(
     suggested: List<String>,
     values: Map<String, String>,
     onChange: (Map<String, String>) -> Unit,
+    /** Keys edited elsewhere on the screen (e.g. the coverage pattern) and not shown here. */
+    hiddenKeys: Set<String> = emptySet(),
 ) {
     var showAdd by remember { mutableStateOf(false) }
-    val keys = (suggested + values.keys).distinct()
+    val keys = (suggested + values.keys).distinct().filter { it !in hiddenKeys }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text("Details", style = MaterialTheme.typography.titleMedium)
         keys.forEach { k ->

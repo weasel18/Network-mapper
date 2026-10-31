@@ -13,6 +13,9 @@ import android.location.Location
 import android.view.MotionEvent
 import com.networkmapper.app.data.Asset
 import com.networkmapper.app.data.AssetType
+import com.networkmapper.app.data.Coverage
+import com.networkmapper.app.data.CoveragePattern
+import com.networkmapper.app.data.PatternType
 import com.networkmapper.app.data.GeoPt
 import com.networkmapper.app.data.NetPath
 import com.networkmapper.app.ui.Draft
@@ -83,6 +86,7 @@ class MapOverlayController(private val context: Context, val mapView: MapView) {
     })
     private val touchWatcher = TouchWatcherOverlay(density) { onUserPan() }
     private val heat = HeatmapOverlay(density) { onHeatTap(it) }
+    private val patterns = PatternOverlay(density)
     private val draftOverlay = DraftOverlay(
         density,
         onTap = { onVertexTap(it) },
@@ -129,6 +133,21 @@ class MapOverlayController(private val context: Context, val mapView: MapView) {
         overlays.clear()
         overlays.add(events)
         overlays.add(touchWatcher)
+        if (settings.showPatterns && settings.showAssets) {
+            val selectedAssetId = (selected as? Selection.AssetSel)?.id
+            patterns.items = assets.filter { it.type !in settings.hiddenTypes }.mapNotNull { a ->
+                val pattern = Coverage.read(a.attributes) ?: return@mapNotNull null
+                val moving = pinMove?.takeIf { it.assetId == a.id }
+                PatternOverlay.Item(
+                    lat = moving?.current?.lat ?: a.latitude,
+                    lon = moving?.current?.lon ?: a.longitude,
+                    pattern = pattern,
+                    color = a.type.colorArgb.toInt(),
+                    selected = a.id == selectedAssetId,
+                )
+            }
+            if (patterns.items.isNotEmpty()) overlays.add(patterns)
+        }
         if (settings.showHeatmap) {
             heat.points = heatPoints
             overlays.add(heat)
@@ -245,6 +264,53 @@ class TouchWatcherOverlay(private val density: Float, private val onPan: () -> U
                 if (hypot(e.x - downX, e.y - downY) > 12 * density || e.pointerCount > 1) onPan()
         }
         return false
+    }
+}
+
+/**
+ * Antenna coverage patterns: omni circles or sector / directional wedges, shaded in three
+ * bands (strong ≤50 %, good ≤80 %, weak ≤100 % of the range) and outlined in the pin's colour.
+ */
+class PatternOverlay(private val density: Float) : Overlay() {
+    data class Item(val lat: Double, val lon: Double, val pattern: CoveragePattern, val color: Int, val selected: Boolean)
+
+    var items: List<Item> = emptyList()
+    private val bands = listOf(
+        1.0f to Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x30FB8C00; style = Paint.Style.FILL },
+        0.8f to Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x34FDD835; style = Paint.Style.FILL },
+        0.5f to Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x3843A047; style = Paint.Style.FILL },
+    )
+    private val outline = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
+    private val p1 = Point()
+    private val p2 = Point()
+    private val rect = android.graphics.RectF()
+
+    override fun draw(c: Canvas?, proj: Projection?) {
+        if (c == null || proj == null) return
+        val maxR = maxOf(c.width, c.height) * 4f
+        for (item in items) {
+            proj.toPixels(GeoPoint(item.lat, item.lon), p1)
+            proj.toPixels(GeoPoint(item.lat + item.pattern.rangeM / 111_320.0, item.lon), p2)
+            val r = abs(p1.y - p2.y).toFloat()
+            if (r < 4f * density) continue
+            val cx = p1.x.toFloat()
+            val cy = p1.y.toFloat()
+            for ((fraction, paint) in bands) shape(c, cx, cy, (r * fraction).coerceAtMost(maxR), item.pattern, paint)
+            outline.color = (item.color and 0x00FFFFFF) or (if (item.selected) 0xF0000000.toInt() else 0x99000000.toInt())
+            outline.strokeWidth = (if (item.selected) 3f else 1.5f) * density
+            shape(c, cx, cy, r.coerceAtMost(maxR), item.pattern, outline)
+        }
+    }
+
+    private fun shape(c: Canvas, cx: Float, cy: Float, r: Float, p: CoveragePattern, paint: Paint) {
+        if (p.type == PatternType.OMNI) {
+            c.drawCircle(cx, cy, r, paint)
+            return
+        }
+        rect.set(cx - r, cy - r, cx + r, cy + r)
+        val beam = p.effectiveBeamwidth.toFloat()
+        // Canvas angles start at 3 o'clock; azimuth starts at north.
+        c.drawArc(rect, (p.azimuth - 90.0 - beam / 2.0).toFloat(), beam, true, paint)
     }
 }
 

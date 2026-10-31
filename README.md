@@ -38,6 +38,11 @@ poles and demarcs. It also maps Wi-Fi signal strength by GPS and attaches GPS-ta
 - **Pre-filled AP pins**: on an AP, wireless bridge or router pin, **Fill from Wi-Fi** suggests APs you've named,
   APs recorded near the pin and APs in range now. Tap one to fill in its MAC / BSSID (and its other radios), SSID,
   channel or frequency, and your saved name.
+- **Antenna coverage patterns**: give an AP, bridge or router pin an **Omni**, **Sector** or **Directional / PtP**
+  pattern with azimuth, beamwidth and range. It's drawn on the map in strong/good/weak bands (toggle in Layers).
+  - Set azimuth with the slider or **Aim with phone**, which uses the compass corrected to true north.
+  - **From survey** sets the range from where the pin's radios were actually recorded.
+  - The pattern is stored in the pin's details, so it's included in exports and backups.
 - **Export / import sites**: choose which sites to export (all by default).
   - A *Full backup ZIP* holds everything: sites, pins, paths, colours, photos with captions, and Wi-Fi surveys, plus
     GeoJSON, KML and CSV for QGIS/ArcGIS/Excel.

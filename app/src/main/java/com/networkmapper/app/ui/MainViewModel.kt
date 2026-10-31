@@ -55,6 +55,8 @@ data class MapSettings(
     val showAssets: Boolean = true,
     val showPaths: Boolean = true,
     val showHeatmap: Boolean = false,
+    /** Antenna coverage patterns on AP / bridge / router pins. */
+    val showPatterns: Boolean = true,
     val tileStyle: TileStyle = TileStyle.STREET,
     val hiddenTypes: Set<AssetType> = emptySet(),
 )
@@ -353,6 +355,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val out = LinkedHashMap<String, ApCandidate>()
         ordered.forEach { out.putIfAbsent(it.bssid, it) }
         return out.values.toList()
+    }
+
+    /**
+     * How far from a pin its radios were recorded: (reliable ≥ -67 dBm, usable ≥ -80 dBm) in metres,
+     * either null when there are no such samples.
+     */
+    suspend fun surveyedRange(bssids: Set<String>, lat: Double, lon: Double): Pair<Double?, Double?> {
+        val origin = GeoPt(lat, lon)
+        val readings = repo.readingsForBssids(currentSiteId.value, bssids)
+        fun reach(min: Int) = readings.filter { it.rssi >= min }
+            .maxOfOrNull { Geo.distanceMeters(origin, GeoPt(it.latitude, it.longitude)) }
+        return reach(-67) to reach(-80)
     }
 
     /** True for the automatic names given to new pins ("Wi-Fi access point 3", "Photo pin …"). */
