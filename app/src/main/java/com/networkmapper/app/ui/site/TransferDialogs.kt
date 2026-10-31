@@ -110,7 +110,7 @@ fun ExportSitesDialog(vm: MainViewModel, onDismiss: () -> Unit) {
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Export sites") },
+        title = { Text("Save sites to file") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -252,7 +252,7 @@ fun rememberSiteImport(vm: MainViewModel): () -> Unit {
     message?.let { msg ->
         AlertDialog(
             onDismissRequest = { message = null },
-            title = { Text("Import") },
+            title = { Text("Load sites") },
             text = { Text(msg) },
             confirmButton = { TextButton(onClick = { message = null }) { Text("OK") } },
         )
@@ -291,7 +291,7 @@ private fun ImportSelectDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Import sites") },
+        title = { Text("Load sites from file") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(
@@ -349,7 +349,7 @@ private fun ImportSelectDialog(
                 onClick = {
                     onImport(selected.associateWith { key -> (chosen[key] ?: defaultFor(preview.sites.first { it.key == key })).target })
                 },
-            ) { Text("Import") }
+            ) { Text("Load") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )

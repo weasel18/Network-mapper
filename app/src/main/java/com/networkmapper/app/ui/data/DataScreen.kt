@@ -97,12 +97,12 @@ fun DataScreen(vm: MainViewModel, onBack: () -> Unit, onOpenSites: () -> Unit) {
             Button(onClick = { showExport = true }, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Default.Upload, null)
                 Spacer(Modifier.width(8.dp))
-                Text("Export sites… (backup ZIP or Google Earth KMZ)")
+                Text("Save sites to file… (backup ZIP or Google Earth KMZ)")
             }
             OutlinedButton(onClick = startImport, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Default.Download, null)
                 Spacer(Modifier.width(8.dp))
-                Text("Import / restore sites…")
+                Text("Load sites from file…")
             }
             Text(
                 "Export: pick which sites to include (all by default). A backup ZIP holds everything – sites, pins, " +

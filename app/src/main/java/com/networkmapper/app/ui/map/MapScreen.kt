@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Directions
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.GpsFixed
 import androidx.compose.material.icons.filled.GpsNotFixed
 import androidx.compose.material.icons.filled.Layers
@@ -328,7 +329,7 @@ fun MapScreen(
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
-                            Text("Site • tap to switch", style = MaterialTheme.typography.labelSmall)
+                            Text("Tap for sites", style = MaterialTheme.typography.labelSmall)
                         }
                         Icon(Icons.Default.ArrowDropDown, "Switch site")
                     }
@@ -340,7 +341,7 @@ fun MapScreen(
                     Box {
                         IconButton(onClick = { showMenu = true }) { Icon(Icons.Default.MoreVert, "More") }
                         DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
-                            DropdownMenuItem(text = { Text("Sites") }, onClick = {
+                            DropdownMenuItem(text = { Text("Sites – open, save & load…") }, onClick = {
                                 showMenu = false
                                 onOpenSites()
                             })
@@ -368,6 +369,7 @@ fun MapScreen(
                     .padding(8.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
+                SiteChip(currentSite?.name ?: "…", onOpenSites)
                 GpsChip(location, hasLocationPermission, onRequestPermission)
                 if (surveyRunning) {
                     StatusChip(
@@ -591,6 +593,32 @@ private fun StatusChip(text: String, color: Color, onClick: (() -> Unit)? = null
             style = MaterialTheme.typography.labelMedium,
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
         )
+    }
+}
+
+/** Always-visible button showing the open site; opens the Sites screen (open / new / save / load). */
+@Composable
+private fun SiteChip(name: String, onClick: () -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.primary,
+        contentColor = MaterialTheme.colorScheme.onPrimary,
+        shadowElevation = 4.dp,
+        modifier = Modifier.clickable(onClick = onClick),
+    ) {
+        Row(
+            Modifier.padding(start = 10.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.Default.FolderOpen, null, Modifier.size(18.dp))
+            Spacer(Modifier.width(6.dp))
+            Column {
+                Text("SITE", style = MaterialTheme.typography.labelSmall)
+                Text(name, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Spacer(Modifier.width(4.dp))
+            Text("Sites ▾", style = MaterialTheme.typography.labelMedium)
+        }
     }
 }
 

@@ -107,25 +107,33 @@ fun SitesScreen(vm: MainViewModel, onBack: () -> Unit, onOpened: () -> Unit) {
                         .padding(12.dp),
                 ) {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Save & load", style = MaterialTheme.typography.titleMedium)
+                        Text("Save & load sites", style = MaterialTheme.typography.titleMedium)
                         Text(
-                            "Everything is saved on this phone automatically. Export sites to back them up or move " +
-                                "them to another phone; import to load them back.",
+                            "While a site is open, everything you map is saved on this phone automatically. " +
+                                "To keep a copy or move sites to another phone, save them to a file; load a file to bring them back.",
                             style = MaterialTheme.typography.bodySmall,
                         )
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(onClick = { showExport = true }, enabled = sites.isNotEmpty()) {
-                                Icon(Icons.Default.Upload, null)
-                                Spacer(Modifier.width(6.dp))
-                                Text("Export…")
-                            }
-                            OutlinedButton(onClick = startImport) {
-                                Icon(Icons.Default.Download, null)
-                                Spacer(Modifier.width(6.dp))
-                                Text("Import…")
-                            }
+                        Button(onClick = { showExport = true }, enabled = sites.isNotEmpty(), modifier = Modifier.fillMaxWidth()) {
+                            Icon(Icons.Default.Upload, null)
+                            Spacer(Modifier.width(6.dp))
+                            Text("Save sites to file…")
+                        }
+                        OutlinedButton(onClick = startImport, modifier = Modifier.fillMaxWidth()) {
+                            Icon(Icons.Default.Download, null)
+                            Spacer(Modifier.width(6.dp))
+                            Text("Load sites from file…")
                         }
                     }
+                }
+            }
+            item {
+                Column(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+                    Text("Sites on this phone", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "Tap a site to open it on the map. Tap + New site to start another job.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
             items(sites, key = { it.site.id }) { s ->
