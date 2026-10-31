@@ -9,13 +9,15 @@ poles and demarcs. It also maps Wi-Fi signal strength by GPS and attaches GPS-ta
 - **Map** (OpenStreetMap, topo, or Esri satellite imagery; no API key needed). Tiles you've viewed are cached for offline use.
 - **Pins**: drop one at your GPS position (+ button) or long-press anywhere. There are 11 asset types, each with
   suggested detail fields (e.g. splice count, tray count, SSID/MAC/IP, azimuth/tilt, port count), plus custom fields,
-  status and notes. Unlock pins in *Layers* to drag a pin to a corrected position.
+  status and notes. Pins can't be moved by accident: tap a pin, then **Move**, then tap the new spot, drag it, or use GPS,
+  and **Save position** (or Cancel).
 - **Locate**: tap a pin to see its distance and bearing from you, or hand off to a navigation app.
 - **Paths**: draw fiber (underground/aerial), conduit, copper or wireless links. Tap the map to add points, tap pins to
   snap the ends to junctions or bridges, or turn on **Auto-track** and walk the route with GPS. You can set length,
   fiber count, cable type and colour coding.
-  Tap **Finish** to save. To change a route later, tap it on the map, then **Edit / extend route**. Tap a point to select
-  it, drag it to move it, or delete it or insert a point next to it. **Undo** steps back through every change.
+  Tap **Finish** to save. To change a route later, tap it on the map, then **Edit / extend route**. Existing points are
+  locked in **Add points** mode. Switch to **Edit points** to select a point, drag it, delete it, or insert a point
+  next to it. **Undo** steps back through every change.
   Switch between *adding at end (B)* and *adding at start (A)* to continue the route from either end, by tapping or
   Auto-track. An unfinished route is kept if the app is closed.
 - **Photos**: the camera button creates a *photo pin* at your location. You can also add photos to any pin or path.

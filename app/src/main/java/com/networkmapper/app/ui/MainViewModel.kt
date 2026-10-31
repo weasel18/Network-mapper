@@ -48,7 +48,6 @@ data class MapSettings(
     val showAssets: Boolean = true,
     val showPaths: Boolean = true,
     val showHeatmap: Boolean = false,
-    val lockPins: Boolean = true,
     val tileStyle: TileStyle = TileStyle.STREET,
     val hiddenTypes: Set<AssetType> = emptySet(),
 )
@@ -60,6 +59,16 @@ sealed interface Selection {
 
 data class DraftPoint(val pt: GeoPt, val assetId: Long? = null)
 
+/** A pin being repositioned; nothing is saved until the user confirms. */
+data class PinMove(
+    val assetId: Long,
+    val name: String,
+    val original: GeoPt,
+    val current: GeoPt,
+    val accuracy: Float?,
+    val altitude: Double?,
+)
+
 /** Which end of the route new points (taps, GPS points, auto-track) are added to. */
 enum class DraftEnd { END, START }
 
@@ -69,6 +78,8 @@ data class Draft(
     val points: List<DraftPoint> = emptyList(),
     val autoTrack: Boolean = false,
     val extendFrom: DraftEnd = DraftEnd.END,
+    /** Edit-points mode: vertices can be selected and dragged. Off = taps only add points. */
+    val editPoints: Boolean = false,
     /** Vertex currently selected for move / delete / insert. */
     val selectedIndex: Int? = null,
     /** Previous point lists, newest last, for multi-step undo. */
@@ -208,10 +219,45 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
 
-    fun moveAsset(asset: Asset, pt: GeoPt) = viewModelScope.launch {
-        repo.getAsset(asset.id)?.let {
-            repo.updateAsset(it.copy(latitude = pt.lat, longitude = pt.lon, accuracy = null))
+    // ---------- Pin move mode ----------
+    val pinMove = MutableStateFlow<PinMove?>(null)
+
+    fun startPinMove(asset: Asset) {
+        draft.value = null
+        selected.value = Selection.AssetSel(asset.id)
+        val pt = GeoPt(asset.latitude, asset.longitude)
+        pinMove.value = PinMove(asset.id, asset.name, pt, pt, asset.accuracy, asset.altitude)
+    }
+
+    /** Manual placement (map tap or drag): accuracy becomes unknown. */
+    fun setPinMovePosition(pt: GeoPt) {
+        pinMove.update { m -> m?.copy(current = pt, accuracy = null, altitude = null) }
+    }
+
+    fun pinMoveToGps(): Boolean {
+        val loc = location.value ?: return false
+        pinMove.update { m ->
+            m?.copy(
+                current = GeoPt(loc.latitude, loc.longitude),
+                accuracy = if (loc.hasAccuracy()) loc.accuracy else null,
+                altitude = if (loc.hasAltitude()) loc.altitude else null,
+            )
         }
+        return true
+    }
+
+    fun cancelPinMove() {
+        pinMove.value = null
+    }
+
+    fun savePinMove() = viewModelScope.launch {
+        val m = pinMove.value ?: return@launch
+        repo.getAsset(m.assetId)?.let {
+            repo.updateAsset(
+                it.copy(latitude = m.current.lat, longitude = m.current.lon, accuracy = m.accuracy, altitude = m.altitude),
+            )
+        }
+        pinMove.value = null
     }
 
     /** Creates a new pin from a freshly taken photo, located by GPS (or EXIF, or the map centre). */
@@ -278,12 +324,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun startDraft(kind: PathKind) {
+        pinMove.value = null
         selected.value = null
         draft.value = Draft(kind = kind)
     }
 
     /** Re-opens a saved path's route for editing / extending (from the end by default). */
     fun editPathRoute(path: NetPath, extendFrom: DraftEnd = DraftEnd.END) {
+        pinMove.value = null
         selected.value = null
         val pts = path.points.mapIndexed { i, p ->
             DraftPoint(
@@ -330,6 +378,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val d = draft.value ?: return
         val focus = if (end == DraftEnd.END) d.points.lastOrNull() else d.points.firstOrNull()
         focus?.let { focusOn(it.pt) }
+    }
+
+    /** Switches between adding points and editing existing ones. Editing pauses auto-track. */
+    fun setDraftEditPoints(on: Boolean) {
+        draft.update { d -> d?.copy(editPoints = on, selectedIndex = null, autoTrack = if (on) false else d.autoTrack) }
     }
 
     fun selectDraftPoint(index: Int?) {

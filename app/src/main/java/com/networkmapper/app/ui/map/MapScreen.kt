@@ -42,6 +42,7 @@ import androidx.compose.material.icons.filled.GpsNotFixed
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.MyLocation
+import androidx.compose.material.icons.filled.OpenWith
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material.icons.filled.Wifi
@@ -61,8 +62,12 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -101,6 +106,7 @@ import com.networkmapper.app.ui.Draft
 import com.networkmapper.app.ui.DraftEnd
 import com.networkmapper.app.ui.HeatFilter
 import com.networkmapper.app.ui.MainViewModel
+import com.networkmapper.app.ui.PinMove
 import com.networkmapper.app.ui.Selection
 import com.networkmapper.app.ui.TileStyle
 import com.networkmapper.app.ui.components.AssetTypePickerDialog
@@ -138,6 +144,7 @@ fun MapScreen(
     val heat by vm.heatPoints.collectAsStateWithLifecycle()
     val location by vm.location.collectAsStateWithLifecycle()
     val selected by vm.selected.collectAsStateWithLifecycle()
+    val pinMove by vm.pinMove.collectAsStateWithLifecycle()
     val heatFilter by vm.heatFilter.collectAsStateWithLifecycle()
     val coverage by vm.coverage.collectAsStateWithLifecycle()
     val surveyRunning by SurveyState.running.collectAsStateWithLifecycle()
@@ -201,20 +208,29 @@ fun MapScreen(
     // Callbacks always see the latest state.
     SideEffect {
         overlays.onAssetClick = { asset ->
-            if (vm.draft.value != null) {
-                vm.addDraftPoint(GeoPt(asset.latitude, asset.longitude), asset.id)
+            val current = vm.draft.value
+            if (vm.pinMove.value != null) {
+                // Moving a pin: other pins are inert.
+            } else if (current != null) {
+                // Snap to a pin only while adding points; in Edit-points mode pins are inert.
+                if (!current.editPoints) vm.addDraftPoint(GeoPt(asset.latitude, asset.longitude), asset.id)
             } else {
                 vm.select(Selection.AssetSel(asset.id))
                 // While a single-device signal map is open, tapping another linked radio switches to it.
                 if (vm.settings.value.showHeatmap && vm.heatFilter.value is HeatFilter.Device) vm.showDeviceSignal(asset)
             }
         }
-        overlays.onPathClick = { path -> if (vm.draft.value == null) vm.select(Selection.PathSel(path.id)) }
+        overlays.onPathClick = { path ->
+            if (vm.draft.value == null && vm.pinMove.value == null) vm.select(Selection.PathSel(path.id))
+        }
         overlays.onMapTap = { pt ->
             val current = vm.draft.value
-            if (current != null) {
-                // With a point selected, tapping the map just deselects it.
-                if (current.selectedIndex != null) vm.selectDraftPoint(null) else vm.addDraftPoint(pt)
+            if (vm.pinMove.value != null) {
+                vm.setPinMovePosition(pt)
+                true
+            } else if (current != null) {
+                // In Edit-points mode a map tap only deselects; points are added in Add mode.
+                if (current.editPoints) vm.selectDraftPoint(null) else vm.addDraftPoint(pt)
                 true
             } else {
                 vm.select(null)
@@ -222,10 +238,10 @@ fun MapScreen(
             }
         }
         overlays.onLongPress = { pt ->
-            if (vm.draft.value == null) pendingPin = PendingPin(pt, null, null, fromGps = false)
+            if (vm.draft.value == null && vm.pinMove.value == null) pendingPin = PendingPin(pt, null, null, fromGps = false)
             true
         }
-        overlays.onAssetDragged = { asset, pt -> vm.moveAsset(asset, pt) }
+        overlays.onAssetDragged = { _, pt -> vm.setPinMovePosition(pt) }
         overlays.onUserPan = { follow = false }
         overlays.onVertexTap = { i -> vm.selectDraftPoint(i) }
         overlays.onVertexDragStart = { i -> vm.beginDraftPointMove(i) }
@@ -235,8 +251,8 @@ fun MapScreen(
     LaunchedEffect(settings.tileStyle) { overlays.setTileStyle(settings.tileStyle) }
     val drafting = draft != null
     val editingPathId = draft?.editingPathId
-    LaunchedEffect(assets, paths, settings, drafting, editingPathId, heat, selected) {
-        overlays.render(assets, paths, settings, drafting, editingPathId, heat, selected)
+    LaunchedEffect(assets, paths, settings, drafting, editingPathId, heat, selected, pinMove) {
+        overlays.render(assets, paths, settings, drafting, editingPathId, heat, selected, pinMove)
     }
     LaunchedEffect(draft) { overlays.setDraft(draft) }
 
@@ -257,6 +273,7 @@ fun MapScreen(
 
     // Back while drawing asks what to do instead of silently leaving.
     BackHandler(enabled = drafting) { confirmLeaveDraft = true }
+    BackHandler(enabled = pinMove != null) { vm.cancelPinMove() }
     LaunchedEffect(location, follow) {
         overlays.setLocation(location)
         val loc = location ?: return@LaunchedEffect
@@ -364,7 +381,20 @@ fun MapScreen(
                     Icon(if (follow) Icons.Default.GpsFixed else Icons.Default.MyLocation, "My location")
                 }
 
+                val move = pinMove
                 when {
+                    move != null -> PinMoveBar(
+                        move = move,
+                        location = location,
+                        onUseGps = {
+                            if (!vm.pinMoveToGps()) Toast.makeText(context, "No GPS fix yet", Toast.LENGTH_SHORT).show()
+                        },
+                        onCancel = vm::cancelPinMove,
+                        onSave = {
+                            vm.savePinMove()
+                            Toast.makeText(context, "Pin position saved", Toast.LENGTH_SHORT).show()
+                        },
+                    )
                     d != null -> DraftBar(
                         draft = d,
                         onUndo = vm::undoDraft,
@@ -378,6 +408,7 @@ fun MapScreen(
                         onDeletePoint = vm::deleteSelectedDraftPoint,
                         onInsertPoint = vm::insertDraftPointNearSelected,
                         onDeselect = { vm.selectDraftPoint(null) },
+                        onEditPoints = vm::setDraftEditPoints,
                     )
                     selAsset != null -> AssetCard(
                         asset = selAsset,
@@ -396,6 +427,7 @@ fun MapScreen(
                             }
                         },
                         onLinkRadios = { linkRadiosFor = selAsset },
+                        onMove = { vm.startPinMove(selAsset) },
                     )
                     selPath != null -> PathCard(
                         path = selPath,
@@ -622,6 +654,7 @@ private fun DraftBar(
     onDeletePoint: () -> Unit,
     onInsertPoint: () -> Unit,
     onDeselect: () -> Unit,
+    onEditPoints: (Boolean) -> Unit,
 ) {
     Card(Modifier.fillMaxWidth(), elevation = CardDefaults.cardElevation(6.dp)) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -648,61 +681,135 @@ private fun DraftBar(
                 }
             }
 
-            val sel = draft.selectedIndex
-            if (sel != null && sel in draft.points.indices) {
-                // Selected-vertex tools.
-                Text(
-                    "Point ${sel + 1} of ${draft.points.size} selected – drag it to move, or:",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilledTonalButton(onClick = onDeletePoint) {
+            // Mode switch: existing points can only be changed in Edit points mode.
+            if (draft.points.isNotEmpty()) {
+                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                    SegmentedButton(
+                        selected = !draft.editPoints,
+                        onClick = { onEditPoints(false) },
+                        shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+                        icon = { Icon(Icons.Default.Add, null, Modifier.size(18.dp)) },
+                    ) { Text("Add points") }
+                    SegmentedButton(
+                        selected = draft.editPoints,
+                        onClick = { onEditPoints(true) },
+                        shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+                        icon = { Icon(Icons.Default.Edit, null, Modifier.size(18.dp)) },
+                    ) { Text("Edit points") }
+                }
+            }
+
+            if (draft.editPoints) {
+                val sel = draft.selectedIndex
+                if (sel != null && sel in draft.points.indices) {
+                    Text(
+                        "Point ${sel + 1} of ${draft.points.size} selected – drag it to move, or:",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                } else {
+                    Text(
+                        "Tap a point to select it, or press and drag a point to move it. Pins are locked while editing.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    IconButton(onClick = onUndo, enabled = draft.canUndo) {
+                        Icon(Icons.AutoMirrored.Filled.Undo, "Undo")
+                    }
+                    FilledTonalButton(onClick = onDeletePoint, enabled = sel != null) {
                         Icon(Icons.Default.Delete, null)
                         Spacer(Modifier.width(4.dp))
-                        Text("Delete point")
+                        Text("Delete")
                     }
-                    FilledTonalButton(onClick = onInsertPoint, enabled = draft.points.size >= 2) {
+                    FilledTonalButton(onClick = onInsertPoint, enabled = sel != null && draft.points.size >= 2) {
                         Icon(Icons.Default.Add, null)
                         Spacer(Modifier.width(4.dp))
-                        Text("Insert point")
+                        Text("Insert")
                     }
-                    TextButton(onClick = onDeselect) { Text("Done") }
+                    if (sel != null) TextButton(onClick = onDeselect) { Text("Deselect") }
+                    TextButton(onClick = onCancel) { Text("Cancel") }
                 }
             } else {
                 Text(
                     when {
                         draft.points.isEmpty() -> "Tap the map to place the first point, or use GPS point / Auto-track."
                         draft.points.size == 1 -> "Add at least one more point, then tap Finish."
-                        else -> "Tap map to add at end ${if (draft.extendFrom == DraftEnd.START) "A" else "B"} • " +
-                            "tap a pin to snap • tap a point to edit it, drag to move"
+                        else -> "Tap the map to add at end ${if (draft.extendFrom == DraftEnd.START) "A" else "B"} • " +
+                            "tap a pin to snap. Existing points are locked."
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                // Tools wrap onto a second line instead of scrolling off-screen.
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    IconButton(onClick = onUndo, enabled = draft.canUndo) {
+                        Icon(Icons.AutoMirrored.Filled.Undo, "Undo")
+                    }
+                    FilledTonalButton(onClick = onGpsPoint) {
+                        Icon(Icons.Default.GpsNotFixed, null)
+                        Spacer(Modifier.width(4.dp))
+                        Text("GPS point")
+                    }
+                    FilterChip(selected = draft.autoTrack, onClick = onToggleAuto, label = { Text("Auto-track") })
+                    if (draft.points.size >= 2) {
+                        FilterChip(
+                            selected = draft.extendFrom == DraftEnd.START,
+                            onClick = {
+                                onExtendFrom(if (draft.extendFrom == DraftEnd.START) DraftEnd.END else DraftEnd.START)
+                            },
+                            label = { Text(if (draft.extendFrom == DraftEnd.START) "Adding at start (A)" else "Adding at end (B)") },
+                        )
+                    }
+                    TextButton(onClick = onCancel) { Text("Cancel") }
+                }
             }
+        }
+    }
+}
 
-            // Tools wrap onto a second line instead of scrolling off-screen.
-            FlowRow(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalArrangement = Arrangement.Center,
-            ) {
-                IconButton(onClick = onUndo, enabled = draft.canUndo) {
-                    Icon(Icons.AutoMirrored.Filled.Undo, "Undo")
+@Composable
+private fun PinMoveBar(
+    move: PinMove,
+    location: Location?,
+    onUseGps: () -> Unit,
+    onCancel: () -> Unit,
+    onSave: () -> Unit,
+) {
+    Card(Modifier.fillMaxWidth(), elevation = CardDefaults.cardElevation(6.dp)) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Moving: ${move.name}", fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    val moved = Geo.distanceMeters(move.original, move.current)
+                    Text(
+                        if (moved < 0.05) "Not moved yet" else "Moved ${Geo.formatDistance(moved)}" +
+                            (move.accuracy?.let { " • GPS ±${it.toInt()} m" } ?: ""),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
                 }
-                FilledTonalButton(onClick = onGpsPoint) {
-                    Icon(Icons.Default.GpsNotFixed, null)
+                Button(onClick = onSave, enabled = move.current != move.original) {
+                    Icon(Icons.Default.Check, null)
                     Spacer(Modifier.width(4.dp))
-                    Text("GPS point")
+                    Text("Save position")
                 }
-                FilterChip(selected = draft.autoTrack, onClick = onToggleAuto, label = { Text("Auto-track") })
-                if (draft.points.size >= 2) {
-                    FilterChip(
-                        selected = draft.extendFrom == DraftEnd.START,
-                        onClick = {
-                            onExtendFrom(if (draft.extendFrom == DraftEnd.START) DraftEnd.END else DraftEnd.START)
+            }
+            Text(
+                "Tap the map where the pin belongs, or long-press the pin and drag it. Nothing changes until you save.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                FilledTonalButton(onClick = onUseGps) {
+                    Icon(Icons.Default.GpsFixed, null)
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        if (location != null && location.hasAccuracy()) {
+                            "Use my GPS (±${location.accuracy.toInt()} m)"
+                        } else {
+                            "Use my GPS"
                         },
-                        label = { Text(if (draft.extendFrom == DraftEnd.START) "Adding at start (A)" else "Adding at end (B)") },
                     )
                 }
                 TextButton(onClick = onCancel) { Text("Cancel") }
@@ -722,6 +829,7 @@ private fun AssetCard(
     signalShowing: Boolean,
     onSignal: () -> Unit,
     onLinkRadios: () -> Unit,
+    onMove: () -> Unit,
 ) {
     Card(Modifier.fillMaxWidth(), elevation = CardDefaults.cardElevation(6.dp)) {
         Column(Modifier.padding(12.dp)) {
@@ -752,7 +860,7 @@ private fun AssetCard(
             if (asset.notes.isNotBlank()) {
                 Text(asset.notes, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilledTonalButton(onClick = onEdit) {
                     Icon(Icons.Default.Edit, null)
                     Spacer(Modifier.width(4.dp))
@@ -762,6 +870,11 @@ private fun AssetCard(
                     Icon(Icons.Default.Directions, null)
                     Spacer(Modifier.width(4.dp))
                     Text("Navigate")
+                }
+                OutlinedButton(onClick = onMove) {
+                    Icon(Icons.Default.OpenWith, null)
+                    Spacer(Modifier.width(4.dp))
+                    Text("Move")
                 }
             }
             if (asset.type.bssidField != null) {
@@ -855,7 +968,6 @@ private fun LayersDialog(
                 CheckRow("Pins", settings.showAssets) { onChange(settings.copy(showAssets = it)) }
                 CheckRow("Fiber / link paths", settings.showPaths) { onChange(settings.copy(showPaths = it)) }
                 CheckRow("Wi-Fi signal heatmap", settings.showHeatmap) { onChange(settings.copy(showHeatmap = it)) }
-                CheckRow("Lock pins (disable drag-to-move)", settings.lockPins) { onChange(settings.copy(lockPins = it)) }
                 HorizontalDivider(Modifier.padding(vertical = 6.dp))
                 Text("Pin types", style = MaterialTheme.typography.titleSmall)
                 AssetType.entries.forEach { t ->

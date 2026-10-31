@@ -18,6 +18,7 @@ import com.networkmapper.app.data.NetPath
 import com.networkmapper.app.ui.Draft
 import com.networkmapper.app.ui.HeatPoint
 import com.networkmapper.app.ui.MapSettings
+import com.networkmapper.app.ui.PinMove
 import com.networkmapper.app.ui.Selection
 import com.networkmapper.app.ui.TileStyle
 import com.networkmapper.app.util.Wifi
@@ -120,6 +121,7 @@ class MapOverlayController(private val context: Context, val mapView: MapView) {
         editingPathId: Long?,
         heatPoints: List<HeatPoint>,
         selected: Selection?,
+        pinMove: PinMove?,
     ) {
         val overlays = mapView.overlays
         overlays.clear()
@@ -137,9 +139,15 @@ class MapOverlayController(private val context: Context, val mapView: MapView) {
         }
         if (settings.showAssets) {
             val selectedAssetId = (selected as? Selection.AssetSel)?.id
-            val draggable = !settings.lockPins && !drafting
-            assets.filter { it.type !in settings.hiddenTypes }.forEach {
-                overlays.add(buildMarker(it, it.id == selectedAssetId, draggable))
+            // Pins can only be dragged in explicit Move mode, and only the pin being moved.
+            assets.filter { it.type !in settings.hiddenTypes || it.id == pinMove?.assetId }.forEach {
+                val moving = pinMove?.assetId == it.id
+                val shown = if (moving && pinMove != null) {
+                    it.copy(latitude = pinMove.current.lat, longitude = pinMove.current.lon)
+                } else {
+                    it
+                }
+                overlays.add(buildMarker(shown, it.id == selectedAssetId || moving, draggable = moving))
             }
         }
         // Above the pins so route vertices can be grabbed; taps elsewhere still reach pins (to snap).
@@ -318,7 +326,8 @@ class DraftOverlay(
             val x = a.x.toFloat()
             val y = a.y.toFloat()
             val isEnd = i == 0 || i == pts.lastIndex
-            val r = (if (isEnd) 8f else 5.5f) * density
+            // Bigger "handles" in Edit-points mode so they're easy to grab.
+            val r = (if (isEnd) 8f else if (d.editPoints) 7f else 4.5f) * density
             if (i == d.selectedIndex) {
                 c.drawCircle(x, y, r * 2.2f, halo)
                 c.drawCircle(x, y, r * 1.3f, selectedFill)
@@ -353,6 +362,11 @@ class DraftOverlay(
         val e = event ?: return false
         val mv = mapView ?: return false
         val d = draft ?: return false
+        // Outside Edit-points mode the route can't be grabbed: touches pan the map / add points.
+        if (!d.editPoints) {
+            activeIndex = -1
+            return false
+        }
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 val hit = hitVertex(e.x, e.y, mv.projection, d) ?: run {
