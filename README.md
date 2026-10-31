@@ -30,6 +30,11 @@ poles and demarcs. It also maps Wi-Fi signal strength by GPS and attaches GPS-ta
   Tap an AP, bridge or router pin and choose **Signal map** to see only that device's coverage, with reliable
   (≥ -67 dBm) and usable (≥ -80 dBm) range measured from the pin. The first time, link the pin to its radio(s); the
   app lists the networks heard closest to the pin and auto-selects the other bands/SSIDs of the same box.
+- **Tap the signal trail**: tap any dot on the Wi-Fi heatmap to see every AP heard within 5 m of that spot, with RSSI,
+  band/channel and BSSID. From there, show one AP's coverage or name it.
+- **Name APs by MAC / BSSID**: use ✎ on the map's "Wi-Fi heard here" card or on any row of the Wi-Fi screen. You can
+  apply the name to the AP's other radios (same MAC prefix) and drop a linked AP pin where it was heard strongest.
+  Names show everywhere (lists, legend, CSV/GeoJSON exports) and travel in backups.
 - **Export / import sites**: choose which sites to export (all by default).
   - A *Full backup ZIP* holds everything: sites, pins, paths, colours, photos with captions, and Wi-Fi surveys, plus
     GeoJSON, KML and CSV for QGIS/ArcGIS/Excel.

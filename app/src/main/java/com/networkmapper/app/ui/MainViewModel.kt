@@ -123,7 +123,24 @@ sealed interface HeatFilter {
     }
 }
 
-data class HeatPoint(val lat: Double, val lon: Double, val rssi: Int)
+data class HeatPoint(
+    val lat: Double,
+    val lon: Double,
+    val rssi: Int,
+    val bssid: String = "",
+    val ssid: String = "",
+    val timestamp: Long = 0,
+)
+
+/** What was heard at a tapped spot on the signal map. */
+data class SpotInfo(
+    val lat: Double,
+    val lon: Double,
+    val tapped: HeatPoint,
+    /** Every AP recorded within a few metres of the spot, the tapped one first, then strongest first. */
+    val networks: List<NetworkSummary>,
+    val lastSeen: Long?,
+)
 
 /** Coverage summary for a single-device heatmap, measured from the device's pin. */
 data class CoverageStats(
@@ -198,6 +215,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (id == currentSiteId.value) return true
         pinMove.value = null
         selected.value = null
+        spotInfo.value = null
         heatFilter.value = HeatFilter.Strongest
         heatSession.value = null
         setCurrentSite(id)
@@ -264,6 +282,52 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val siteReadingCount: StateFlow<Int> = currentSiteId.flatMapLatest { repo.readingCount(it) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), 0)
 
+    // ---------- AP names ----------
+    /** Your own AP names by BSSID. */
+    val explicitApNames: StateFlow<Map<String, String>> = repo.apNames
+        .map { list -> list.associate { it.bssid to it.name } }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
+
+    /** Display names by BSSID: your name first, then the name of a pin linked to that radio. */
+    val apNames: StateFlow<Map<String, String>> = combine(explicitApNames, assets) { names, pins ->
+        val out = HashMap<String, String>()
+        pins.forEach { pin -> linkedBssids(pin).forEach { b -> out.putIfAbsent(b, pin.name) } }
+        out.putAll(names)
+        out as Map<String, String>
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
+
+    fun apDisplayName(bssid: String, ssid: String): String =
+        apNames.value[bssid.lowercase()] ?: ssid.ifEmpty { "(hidden network)" }
+
+    /** Names one or more radios (blank name removes it). */
+    fun nameAps(bssids: Collection<String>, name: String) = viewModelScope.launch { repo.setApName(bssids, name) }
+
+    /** Other recorded radios in this site that look like the same physical AP (other band / SSID). */
+    fun siblingRadios(bssid: String): List<NetworkSummary> =
+        networks.value.filter { Wifi.likelySameAp(bssid.lowercase(), it.bssid) }
+
+    /**
+     * Drops an access-point pin where these radios were heard strongest, linked to them so
+     * "Signal map" works straight away. Returns the new pin id, or null with no survey data.
+     */
+    suspend fun createApPinFromSurvey(bssids: Set<String>, name: String, ssid: String): Long? {
+        val strongest = repo.strongestReading(currentSiteId.value, bssids) ?: return null
+        val attrs = LinkedHashMap<String, String>()
+        if (ssid.isNotBlank()) attrs["SSID"] = ssid
+        attrs["MAC / BSSID"] = bssids.sorted().joinToString(", ")
+        return repo.insertAsset(
+            Asset(
+                type = AssetType.ACCESS_POINT,
+                name = name.ifBlank { ssid.ifBlank { "Access point" } },
+                latitude = strongest.latitude,
+                longitude = strongest.longitude,
+                notes = "Placed where the signal was strongest (${strongest.rssi} dBm). Use Move to set the exact spot.",
+                attributes = attrs,
+                siteId = currentSiteId.value,
+            ),
+        )
+    }
+
     fun deleteSurveysForCurrentSite() = viewModelScope.launch {
         heatSession.value = null
         repo.deleteSurveysForSite(currentSiteId.value)
@@ -289,6 +353,26 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun select(sel: Selection?) {
         selected.value = sel
+        if (sel != null) spotInfo.value = null
+    }
+
+    // ---------- Tap a spot on the signal map ----------
+    val spotInfo = MutableStateFlow<SpotInfo?>(null)
+
+    /** Looks up every AP heard within ~[radiusM] of a tapped heatmap dot. */
+    fun inspectSpot(point: HeatPoint, radiusM: Double = 5.0) = viewModelScope.launch {
+        selected.value = null
+        val site = currentSiteId.value
+        val dLat = radiusM / 111_320.0
+        val dLon = dLat / cos(Math.toRadians(point.lat)).coerceAtLeast(0.01)
+        val box = listOf(point.lat - dLat, point.lat + dLat, point.lon - dLon, point.lon + dLon)
+        val nets = repo.getNetworksIn(site, box[0], box[1], box[2], box[3])
+            .sortedWith(compareByDescending<NetworkSummary> { it.bssid == point.bssid }.thenByDescending { it.bestRssi })
+        spotInfo.value = SpotInfo(point.lat, point.lon, point, nets, repo.lastSeenIn(site, box[0], box[1], box[2], box[3]))
+    }
+
+    fun closeSpot() {
+        spotInfo.value = null
     }
 
     fun focusOn(pt: GeoPt, sel: Selection? = null) {
@@ -652,7 +736,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             .groupBy { Math.round(it.latitude * 1e5) to Math.round(it.longitude * 1e5) }
             .values
             .map { group -> group.maxBy { it.rssi } }
-            .map { HeatPoint(it.latitude, it.longitude, it.rssi) }
+            .map { HeatPoint(it.latitude, it.longitude, it.rssi, it.bssid, it.ssid, it.timestamp) }
     }
 
     fun showHeatmapFor(filter: HeatFilter) {
@@ -661,6 +745,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun clearHeatmap() {
+        spotInfo.value = null
         heatFilter.value = HeatFilter.Strongest
         settings.update { it.copy(showHeatmap = false) }
     }

@@ -143,6 +143,21 @@ interface PhotoDao {
 }
 
 @Dao
+interface ApNameDao {
+    @Query("SELECT * FROM ap_names ORDER BY name COLLATE NOCASE")
+    fun observeAll(): Flow<List<ApName>>
+
+    @Query("SELECT * FROM ap_names")
+    suspend fun getAll(): List<ApName>
+
+    @Insert(onConflict = androidx.room.OnConflictStrategy.REPLACE)
+    suspend fun upsert(names: List<ApName>)
+
+    @Query("DELETE FROM ap_names WHERE bssid IN (:bssids)")
+    suspend fun delete(bssids: List<String>)
+}
+
+@Dao
 interface WifiDao {
     @Insert
     suspend fun insertSession(session: SurveySession): Long
@@ -212,4 +227,16 @@ interface WifiDao {
             "GROUP BY r.bssid ORDER BY bestRssi DESC",
     )
     suspend fun getNetworksIn(siteId: Long, south: Double, north: Double, west: Double, east: Double): List<NetworkSummary>
+
+    @Query(
+        "SELECT r.* FROM wifi_readings r INNER JOIN survey_sessions s ON r.sessionId = s.id " +
+            "WHERE s.siteId = :siteId AND r.bssid IN (:bssids) ORDER BY r.rssi DESC, r.timestamp DESC LIMIT 1",
+    )
+    suspend fun strongestReading(siteId: Long, bssids: List<String>): WifiReading?
+
+    @Query(
+        "SELECT MAX(r.timestamp) FROM wifi_readings r INNER JOIN survey_sessions s ON r.sessionId = s.id " +
+            "WHERE s.siteId = :siteId AND r.latitude BETWEEN :south AND :north AND r.longitude BETWEEN :west AND :east",
+    )
+    suspend fun lastSeenIn(siteId: Long, south: Double, north: Double, west: Double, east: Double): Long?
 }

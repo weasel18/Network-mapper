@@ -206,6 +206,14 @@ data class WifiReading(
     val connected: Boolean = false,
 )
 
+/** Your own name for a Wi-Fi radio, keyed by BSSID (lower-case aa:bb:cc:dd:ee:ff). Shared by all sites. */
+@Entity(tableName = "ap_names")
+data class ApName(
+    @PrimaryKey val bssid: String,
+    val name: String,
+    val updatedAt: Long = System.currentTimeMillis(),
+)
+
 data class NetworkSummary(
     val bssid: String,
     val ssid: String,

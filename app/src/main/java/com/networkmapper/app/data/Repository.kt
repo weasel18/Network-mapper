@@ -13,6 +13,7 @@ class Repository(private val context: Context, val db: AppDatabase) {
     private val pathDao = db.pathDao()
     private val photoDao = db.photoDao()
     private val wifiDao = db.wifiDao()
+    private val apNameDao = db.apNameDao()
 
     val photosDir: File
         get() = File(context.filesDir, "photos").apply { mkdirs() }
@@ -106,6 +107,25 @@ class Repository(private val context: Context, val db: AppDatabase) {
         if (sessionId == null) wifiDao.observeReadingsForSite(siteId) else wifiDao.observeReadingsForSession(sessionId)
 
     suspend fun getReadingsForSites(siteIds: Collection<Long>): List<WifiReading> = wifiDao.getReadingsForSites(siteIds.toList())
+    suspend fun strongestReading(siteId: Long, bssids: Collection<String>): WifiReading? =
+        if (bssids.isEmpty()) null else wifiDao.strongestReading(siteId, bssids.toList())
+    suspend fun lastSeenIn(siteId: Long, south: Double, north: Double, west: Double, east: Double): Long? =
+        wifiDao.lastSeenIn(siteId, south, north, west, east)
+
+    // ---- AP names ----
+    val apNames: Flow<List<ApName>> = apNameDao.observeAll()
+    suspend fun getApNames(): List<ApName> = apNameDao.getAll()
+
+    /** Names (or, with a blank name, un-names) one or more BSSIDs. */
+    suspend fun setApName(bssids: Collection<String>, name: String) {
+        val keys = bssids.map { it.lowercase() }.distinct()
+        if (keys.isEmpty()) return
+        if (name.isBlank()) apNameDao.delete(keys) else apNameDao.upsert(keys.map { ApName(it, name.trim()) })
+    }
+
+    suspend fun upsertApNames(names: List<ApName>) {
+        if (names.isNotEmpty()) apNameDao.upsert(names)
+    }
     suspend fun getNetworks(siteId: Long): List<NetworkSummary> = wifiDao.getNetworks(siteId)
     suspend fun getNetworksIn(siteId: Long, south: Double, north: Double, west: Double, east: Double): List<NetworkSummary> =
         wifiDao.getNetworksIn(siteId, south, north, west, east)

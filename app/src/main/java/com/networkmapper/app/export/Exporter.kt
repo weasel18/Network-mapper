@@ -48,6 +48,7 @@ object Exporter {
         val photos: List<Photo>,
         val sessions: List<SurveySession>,
         val readings: List<WifiReading>,
+        val apNames: Map<String, String>,
     )
 
     private suspend fun snapshot(repo: Repository, siteIds: Set<Long>, includeReadings: Boolean) = Snapshot(
@@ -57,6 +58,7 @@ object Exporter {
         photos = repo.getPhotosForSites(siteIds),
         sessions = repo.getSessionsForSites(siteIds),
         readings = if (includeReadings) repo.getReadingsForSites(siteIds) else emptyList(),
+        apNames = repo.getApNames().associate { it.bssid to it.name },
     )
 
     private fun exportDir(context: Context) = File(context.cacheDir, "exports").apply {
@@ -104,6 +106,7 @@ object Exporter {
             text("wifi_survey.csv", buildWifiCsv(snap))
             text("wifi_survey.geojson", buildWifiGeoJson(snap).toString())
             text("photos.json", buildPhotoIndex(snap).toString(2))
+            text("ap_names.json", buildApNames(snap).toString(2))
             addPhotos(zip, repo, snap.photos, "photos/")
         }
         out
@@ -251,6 +254,7 @@ object Exporter {
                             .put("ssid", r.ssid)
                             .put("bssid", r.bssid)
                             .put("rssi", r.rssi)
+                            .put("apName", s.apNames[r.bssid] ?: JSONObject.NULL)
                             .put("frequency", r.frequency)
                             .put("channel", Wifi.channel(r.frequency))
                             .put("connected", r.connected),
@@ -258,6 +262,17 @@ object Exporter {
             )
         }
         return JSONObject().put("type", "FeatureCollection").put("features", features)
+    }
+
+    /** Names for every radio seen in the exported surveys or linked from exported pins. */
+    private fun buildApNames(s: Snapshot): JSONArray {
+        val relevant = s.readings.mapTo(HashSet()) { it.bssid }
+        s.assets.forEach { a -> a.type.bssidField?.let { a.attributes[it] }?.let { relevant += Wifi.parseBssids(it) } }
+        val arr = JSONArray()
+        s.apNames.filterKeys { it in relevant }.toSortedMap().forEach { (bssid, name) ->
+            arr.put(JSONObject().put("bssid", bssid).put("name", name))
+        }
+        return arr
     }
 
     private fun buildPhotoIndex(s: Snapshot): JSONArray {
@@ -289,7 +304,7 @@ object Exporter {
         val siteNames = s.sites.associate { it.id to it.name }
         val sb = StringBuilder(
             "session,time,latitude,longitude,accuracy_m,ssid,bssid,rssi_dbm,frequency_mhz,channel,band,security,connected," +
-                "site,site_id,session_id,time_ms\n",
+                "site,site_id,session_id,time_ms,ap_name\n",
         )
         s.readings.forEach { r ->
             val session = sessions[r.sessionId]
@@ -308,7 +323,8 @@ object Exporter {
                 .append(csv(session?.let { siteNames[it.siteId] } ?: "")).append(',')
                 .append(session?.siteId ?: "").append(',')
                 .append(r.sessionId).append(',')
-                .append(r.timestamp).append('\n')
+                .append(r.timestamp).append(',')
+                .append(csv(s.apNames[r.bssid] ?: "")).append('\n')
         }
         return sb.toString()
     }

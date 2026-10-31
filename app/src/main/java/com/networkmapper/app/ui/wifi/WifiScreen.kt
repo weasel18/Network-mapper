@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Stop
@@ -81,6 +82,8 @@ fun WifiScreen(vm: MainViewModel, onBack: () -> Unit, onShowMap: () -> Unit) {
     val sessions by vm.sessions.collectAsStateWithLifecycle()
     val networks by vm.networks.collectAsStateWithLifecycle()
     val site by vm.currentSite.collectAsStateWithLifecycle()
+    val apNames by vm.apNames.collectAsStateWithLifecycle()
+    var nameAp by remember { mutableStateOf<ScanEntry?>(null) }
     val heatSession by vm.heatSession.collectAsStateWithLifecycle()
     val heatFilter by vm.heatFilter.collectAsStateWithLifecycle()
 
@@ -204,7 +207,7 @@ fun WifiScreen(vm: MainViewModel, onBack: () -> Unit, onShowMap: () -> Unit) {
                                 style = MaterialTheme.typography.labelLarge,
                                 modifier = Modifier.padding(start = 16.dp, top = 8.dp),
                             )
-                            NetworkRow(connected, null) {
+                            NetworkRow(connected, null, apNames[connected.bssid], onName = { nameAp = connected }) {
                                 vm.showHeatmapFor(HeatFilter.Bssid(connected.bssid, connected.ssid))
                                 onShowMap()
                             }
@@ -221,7 +224,7 @@ fun WifiScreen(vm: MainViewModel, onBack: () -> Unit, onShowMap: () -> Unit) {
                         }
                     }
                     items(nearby, key = { "n_" + it.bssid }) { e ->
-                        NetworkRow(e, null) {
+                        NetworkRow(e, null, apNames[e.bssid], onName = { nameAp = e }) {
                             vm.showHeatmapFor(HeatFilter.Bssid(e.bssid, e.ssid))
                             onShowMap()
                         }
@@ -232,7 +235,8 @@ fun WifiScreen(vm: MainViewModel, onBack: () -> Unit, onShowMap: () -> Unit) {
                 1 -> LazyColumn(Modifier.fillMaxSize()) {
                     item {
                         Text(
-                            "Tap a network to map its coverage. Current heatmap: ${heatFilter.label}",
+                            "Tap an AP to map its coverage, or ✎ to give it your own name (saved by its MAC / BSSID). " +
+                                "Current heatmap: ${(heatFilter as? HeatFilter.Bssid)?.let { apNames[it.bssid] } ?: heatFilter.label}",
                             style = MaterialTheme.typography.bodySmall,
                             modifier = Modifier.padding(16.dp),
                         )
@@ -269,9 +273,12 @@ fun WifiScreen(vm: MainViewModel, onBack: () -> Unit, onShowMap: () -> Unit) {
                     }
                     item { Text("Access points", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(16.dp, 8.dp)) }
                     items(networks, key = { "r_" + it.bssid }) { n ->
+                        val entry = ScanEntry(n.ssid, n.bssid, n.bestRssi, n.frequency, "")
                         NetworkRow(
-                            ScanEntry(n.ssid, n.bssid, n.bestRssi, n.frequency, ""),
+                            entry,
                             "best ${n.bestRssi} dBm • ${n.samples} samples",
+                            apNames[n.bssid],
+                            onName = { nameAp = entry },
                         ) {
                             vm.showHeatmapFor(HeatFilter.Bssid(n.bssid, n.ssid))
                             onShowMap()
@@ -320,6 +327,10 @@ fun WifiScreen(vm: MainViewModel, onBack: () -> Unit, onShowMap: () -> Unit) {
         }
     }
 
+    nameAp?.let { e ->
+        ApNameDialog(vm = vm, bssid = e.bssid, ssid = e.ssid, frequency = e.frequency, onDismiss = { nameAp = null })
+    }
+
     deleteSession?.let { s ->
         ConfirmDialog(
             title = "Delete survey?",
@@ -337,7 +348,7 @@ fun WifiScreen(vm: MainViewModel, onBack: () -> Unit, onShowMap: () -> Unit) {
 }
 
 @Composable
-private fun NetworkRow(e: ScanEntry, extra: String?, onClick: () -> Unit) {
+private fun NetworkRow(e: ScanEntry, extra: String?, name: String?, onName: () -> Unit, onClick: () -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -348,9 +359,10 @@ private fun NetworkRow(e: ScanEntry, extra: String?, onClick: () -> Unit) {
         SignalBars(e.rssi)
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
-            Text(e.ssid.ifEmpty { "(hidden network)" }, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(name ?: e.ssid.ifEmpty { "(hidden network)" }, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
-                "${e.bssid} • ch ${Wifi.channel(e.frequency)} (${Wifi.band(e.frequency)})" +
+                (if (name != null) "${e.ssid.ifEmpty { "(hidden)" }} • " else "") +
+                    "${e.bssid} • ch ${Wifi.channel(e.frequency)} (${Wifi.band(e.frequency)})" +
                     (if (e.security.contains("WPA3") || e.security.contains("SAE")) " • WPA3" else if (e.security.contains("WPA")) " • WPA" else ""),
                 style = MaterialTheme.typography.bodySmall,
                 maxLines = 1,
@@ -362,6 +374,7 @@ private fun NetworkRow(e: ScanEntry, extra: String?, onClick: () -> Unit) {
             Text("${e.rssi} dBm", fontWeight = FontWeight.Bold, color = Color(Wifi.rssiColor(e.rssi)))
             Text(Wifi.rssiQuality(e.rssi), style = MaterialTheme.typography.labelSmall)
         }
+        IconButton(onClick = onName) { Icon(Icons.Default.Edit, if (name == null) "Name this AP" else "Rename AP") }
     }
 }
 

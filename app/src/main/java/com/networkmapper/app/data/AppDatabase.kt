@@ -9,8 +9,8 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [Site::class, Asset::class, NetPath::class, Photo::class, SurveySession::class, WifiReading::class],
-    version = 2,
+    entities = [Site::class, Asset::class, NetPath::class, Photo::class, SurveySession::class, WifiReading::class, ApName::class],
+    version = 3,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -20,6 +20,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun pathDao(): PathDao
     abstract fun photoDao(): PhotoDao
     abstract fun wifiDao(): WifiDao
+    abstract fun apNameDao(): ApNameDao
 
     companion object {
         const val DEFAULT_SITE_NAME = "My site"
@@ -46,6 +47,16 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** v2 -> v3: your own names for access points, keyed by BSSID. */
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `ap_names` (`bssid` TEXT NOT NULL, `name` TEXT NOT NULL, " +
+                        "`updatedAt` INTEGER NOT NULL, PRIMARY KEY(`bssid`))",
+                )
+            }
+        }
+
         private val createCallback = object : RoomDatabase.Callback() {
             override fun onCreate(db: SupportSQLiteDatabase) {
                 insertDefaultSite(db)
@@ -54,7 +65,7 @@ abstract class AppDatabase : RoomDatabase() {
 
         /** Shared configuration, also used by tests with an in-memory builder. */
         fun configure(builder: RoomDatabase.Builder<AppDatabase>): RoomDatabase.Builder<AppDatabase> =
-            builder.addMigrations(MIGRATION_1_2).addCallback(createCallback)
+            builder.addMigrations(MIGRATION_1_2, MIGRATION_2_3).addCallback(createCallback)
 
         fun build(context: Context): AppDatabase =
             configure(Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, "network_mapper.db"))

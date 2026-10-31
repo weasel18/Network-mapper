@@ -129,6 +129,12 @@ class DatabaseTest {
         repo.insertAsset(Asset(type = AssetType.SWITCH, name = "SW", latitude = 1.0, longitude = 2.0, siteId = second))
         assertEquals(1, repo.getAssetsForSite(second).size)
         assertEquals(1, repo.getAssetsForSite(DEFAULT_SITE_ID).size)
+
+        // v3 AP names table exists after migrating from v1.
+        repo.setApName(listOf("AA:BB:CC:DD:EE:FF"), "AP-Lobby")
+        assertEquals(mapOf("aa:bb:cc:dd:ee:ff" to "AP-Lobby"), repo.getApNames().associate { it.bssid to it.name })
+        repo.setApName(listOf("aa:bb:cc:dd:ee:ff"), "")
+        assertTrue(repo.getApNames().isEmpty())
     }
 
     // ---------------------------------------------------------------- export / import
@@ -165,6 +171,8 @@ class DatabaseTest {
             ),
         )
         repo1.insertAsset(Asset(type = AssetType.ACCESS_POINT, name = "AP-B", latitude = 41.0, longitude = -104.0, siteId = bravo))
+        repo1.setApName(listOf("aa:bb:cc:dd:ee:01"), "AP-Lobby-2F")
+        repo1.setApName(listOf("11:22:33:44:55:66"), "Unrelated AP") // not in exported data -> not exported
 
         val exported = Exporter.exportZip(context, repo1, setOf(alpha, bravo))
         val backup = File(context.filesDir, "backup.zip").also { exported.copyTo(it, overwrite = true) }
@@ -181,6 +189,7 @@ class DatabaseTest {
 
         // Import only Alpha, as a new site, into a different (empty) database.
         val repo2 = Repository(context, memoryDb())
+        repo2.setApName(listOf("99:99:99:99:99:99"), "Already here")
         val result = Importer.importZip(context, repo2, uri, mapOf(alphaInFile.key to ImportTarget.New("Alpha")))
         assertEquals(1, result.sitesCreated)
         assertEquals(2, result.assets)
@@ -214,12 +223,20 @@ class DatabaseTest {
         assertEquals("Corp, \"Main\"", reading.ssid)
         assertEquals(1_700_000_001_456, reading.timestamp)
         assertEquals(-55, reading.rssi)
+        assertEquals(
+            mapOf("aa:bb:cc:dd:ee:01" to "AP-Lobby-2F", "99:99:99:99:99:99" to "Already here"),
+            repo2.getApNames().associate { it.bssid to it.name },
+        )
+
+        // A name already on the phone is kept on re-import.
+        repo2.setApName(listOf("aa:bb:cc:dd:ee:01"), "Renamed locally")
 
         // Importing the same site again into it adds nothing.
         val again = Importer.importZip(context, repo2, uri, mapOf(alphaInFile.key to ImportTarget.Existing(site.id)))
         assertEquals(0, again.assets + again.paths + again.sessions + again.readings)
         assertTrue(again.skippedDuplicates >= 4)
         assertEquals(2, repo2.getAssetsForSite(site.id).size)
+        assertEquals("Renamed locally", repo2.getApNames().first { it.bssid == "aa:bb:cc:dd:ee:01" }.name)
     }
 
     @Test

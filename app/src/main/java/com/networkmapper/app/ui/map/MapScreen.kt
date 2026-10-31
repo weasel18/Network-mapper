@@ -117,6 +117,13 @@ import com.networkmapper.app.ui.components.PathKindPickerDialog
 import com.networkmapper.app.ui.components.TypeBadge
 import com.networkmapper.app.ui.components.rememberPhotoCapture
 import com.networkmapper.app.util.Geo
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import com.networkmapper.app.data.NetworkSummary
+import com.networkmapper.app.ui.SpotInfo
+import com.networkmapper.app.ui.wifi.ApNameDialog
+import com.networkmapper.app.util.Fmt
 import com.networkmapper.app.util.Wifi
 import kotlinx.coroutines.launch
 import org.osmdroid.util.GeoPoint
@@ -151,6 +158,9 @@ fun MapScreen(
     val currentSite by vm.currentSite.collectAsStateWithLifecycle()
     val heatFilter by vm.heatFilter.collectAsStateWithLifecycle()
     val coverage by vm.coverage.collectAsStateWithLifecycle()
+    val spot by vm.spotInfo.collectAsStateWithLifecycle()
+    val apNames by vm.apNames.collectAsStateWithLifecycle()
+    var nameAp by remember { mutableStateOf<NetworkSummary?>(null) }
     val surveyRunning by SurveyState.running.collectAsStateWithLifecycle()
     val surveyReadings by SurveyState.readings.collectAsStateWithLifecycle()
 
@@ -238,6 +248,7 @@ fun MapScreen(
                 true
             } else {
                 vm.select(null)
+                vm.closeSpot()
                 false
             }
         }
@@ -248,6 +259,14 @@ fun MapScreen(
         overlays.onAssetDragged = { _, pt -> vm.setPinMovePosition(pt) }
         overlays.onUserPan = { follow = false }
         overlays.onVertexTap = { i -> vm.selectDraftPoint(i) }
+        overlays.onHeatTap = { p ->
+            if (vm.draft.value == null && vm.pinMove.value == null) {
+                vm.inspectSpot(p)
+                true
+            } else {
+                false
+            }
+        }
         overlays.onVertexDragStart = { i -> vm.beginDraftPointMove(i) }
         overlays.onVertexDrag = { i, pt -> vm.moveDraftPoint(i, pt) }
     }
@@ -378,7 +397,12 @@ fun MapScreen(
                         onClick = onOpenWifi,
                     )
                 }
-                if (settings.showHeatmap) HeatLegend(heatFilter.label, heat.size, coverage, onClear = vm::clearHeatmap)
+                if (settings.showHeatmap) {
+                    val legendLabel = (heatFilter as? HeatFilter.Bssid)?.let { f ->
+                        "AP: ${apNames[f.bssid] ?: f.ssid.ifEmpty { "(hidden)" }}"
+                    } ?: heatFilter.label
+                    HeatLegend(legendLabel, heat.size, coverage, onClear = vm::clearHeatmap)
+                }
             }
 
             // ---- Bottom area ----
@@ -419,6 +443,13 @@ fun MapScreen(
                             vm.savePinMove()
                             Toast.makeText(context, "Pin position saved", Toast.LENGTH_SHORT).show()
                         },
+                    )
+                    d == null && spot != null -> SpotCard(
+                        spot = spot!!,
+                        names = apNames,
+                        onCoverage = { n -> vm.showHeatmapFor(HeatFilter.Bssid(n.bssid, n.ssid)) },
+                        onName = { n -> nameAp = n },
+                        onClose = vm::closeSpot,
                     )
                     d != null -> DraftBar(
                         draft = d,
@@ -547,6 +578,20 @@ fun MapScreen(
                     }) { Text("Discard") }
                     TextButton(onClick = { confirmLeaveDraft = false }) { Text("Keep drawing") }
                 }
+            },
+        )
+    }
+
+    nameAp?.let { n ->
+        ApNameDialog(
+            vm = vm,
+            bssid = n.bssid,
+            ssid = n.ssid,
+            frequency = n.frequency,
+            onDismiss = { nameAp = null },
+            onPinCreated = { id ->
+                vm.closeSpot()
+                vm.select(Selection.AssetSel(id))
             },
         )
     }
@@ -689,6 +734,73 @@ private fun HeatLegend(label: String, spots: Int, coverage: CoverageStats?, onCl
                 }
             }
             Text("dBm", style = MaterialTheme.typography.labelSmall)
+        }
+    }
+}
+
+@Composable
+private fun SpotCard(
+    spot: SpotInfo,
+    names: Map<String, String>,
+    onCoverage: (NetworkSummary) -> Unit,
+    onName: (NetworkSummary) -> Unit,
+    onClose: () -> Unit,
+) {
+    Card(Modifier.fillMaxWidth(), elevation = CardDefaults.cardElevation(6.dp)) {
+        Column(Modifier.padding(start = 12.dp, top = 4.dp, bottom = 8.dp, end = 4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Wi-Fi heard here", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        Geo.formatCoord(spot.lat, spot.lon) + (spot.lastSeen?.let { " • ${Fmt.dateTime(it)}" } ?: ""),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                IconButton(onClick = onClose) { Icon(Icons.Default.Close, "Close") }
+            }
+            val t = spot.tapped
+            Text(
+                "Dot you tapped: ${names[t.bssid] ?: t.ssid.ifEmpty { "(hidden)" }} • ${t.rssi} dBm",
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color(Wifi.rssiColor(t.rssi)),
+                fontWeight = FontWeight.Medium,
+            )
+            if (spot.networks.isEmpty()) {
+                Text("No samples recorded within 5 m.", style = MaterialTheme.typography.bodySmall)
+            }
+            LazyColumn(Modifier.heightIn(max = 230.dp)) {
+                items(spot.networks, key = { it.bssid }) { n ->
+                    val named = names[n.bssid]
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 2.dp)) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                named ?: n.ssid.ifEmpty { "(hidden network)" },
+                                fontWeight = if (n.bssid == t.bssid) FontWeight.Bold else FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                listOfNotNull(
+                                    if (named != null) n.ssid.ifEmpty { "(hidden)" } else null,
+                                    n.bssid,
+                                    "${Wifi.band(n.frequency)} ch ${Wifi.channel(n.frequency)}",
+                                ).joinToString(" • "),
+                                style = MaterialTheme.typography.labelSmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        Text("${n.bestRssi} dBm", color = Color(Wifi.rssiColor(n.bestRssi)), fontWeight = FontWeight.Bold)
+                        IconButton(onClick = { onName(n) }) { Icon(Icons.Default.Edit, "Name this AP") }
+                        IconButton(onClick = { onCoverage(n) }) { Icon(Icons.Default.Wifi, "Show this AP's coverage") }
+                    }
+                }
+            }
+            Text(
+                "✎ name an AP by its MAC  •  Wi-Fi icon shows that AP's coverage",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

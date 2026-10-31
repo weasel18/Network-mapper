@@ -2,6 +2,7 @@ package com.networkmapper.app.export
 
 import android.content.Context
 import android.net.Uri
+import com.networkmapper.app.data.ApName
 import com.networkmapper.app.data.Asset
 import com.networkmapper.app.data.AssetType
 import com.networkmapper.app.data.GeoPt
@@ -72,7 +73,7 @@ object Importer {
 
     const val LEGACY_KEY = "legacy"
     private val imageExt = setOf("jpg", "jpeg", "png", "webp")
-    private val textFiles = setOf("manifest.json", "network.geojson", "wifi_survey.csv", "photos.json")
+    private val textFiles = setOf("manifest.json", "network.geojson", "wifi_survey.csv", "photos.json", "ap_names.json")
 
     // ------------------------------------------------------------------ parsing
 
@@ -82,6 +83,7 @@ object Importer {
         val csvHeader: List<String>,
         val csvRows: List<List<String>>,
         val photoIndex: Map<String, PhotoMeta>,
+        val apNames: Map<String, String>,
     ) {
         val legacy get() = manifest == null
         fun col(name: String) = csvHeader.indexOf(name)
@@ -114,7 +116,10 @@ object Importer {
         val rows = texts["wifi_survey.csv"]?.let { parseCsv(it) }.orEmpty()
         val header = rows.firstOrNull()?.map { it.trim() }.orEmpty()
         val body = rows.drop(1).filter { it.size >= header.size - 1 && it.any { cell -> cell.isNotBlank() } }
-        return Contents(manifest, features, header, body, texts["photos.json"]?.let { parsePhotoIndex(it) }.orEmpty())
+        val apNames = texts["ap_names.json"]?.let { t ->
+            runCatching { JSONArray(t).objects().associate { it.optString("bssid").lowercase() to it.optString("name") } }.getOrNull()
+        }.orEmpty().filter { it.key.isNotBlank() && it.value.isNotBlank() }
+        return Contents(manifest, features, header, body, texts["photos.json"]?.let { parsePhotoIndex(it) }.orEmpty(), apNames)
     }
 
     private fun featureKey(c: Contents, props: JSONObject): String =
@@ -390,6 +395,12 @@ object Importer {
                     readingCount += readings.size
                 }
             }
+        }
+
+        // AP names are global; add the file's names without overwriting ones already on this phone.
+        if (c.apNames.isNotEmpty()) {
+            val have = repo.getApNames().mapTo(HashSet()) { it.bssid }
+            repo.upsertApNames(c.apNames.filterKeys { it !in have }.map { (b, n) -> ApName(b, n) })
         }
 
         ImportResult(sitesCreated, assetCount, pathCount, photoCount, sessionCount, readingCount, skipped)

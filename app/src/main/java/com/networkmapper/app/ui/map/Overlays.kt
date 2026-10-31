@@ -67,6 +67,8 @@ class MapOverlayController(private val context: Context, val mapView: MapView) {
     var onAssetDragged: (Asset, GeoPt) -> Unit = { _, _ -> }
     var onUserPan: () -> Unit = {}
     var onVertexTap: (Int) -> Unit = {}
+    /** Tap on a Wi-Fi heatmap dot; return true if handled. */
+    var onHeatTap: (HeatPoint) -> Boolean = { false }
     var onVertexDragStart: (Int) -> Unit = {}
     var onVertexDrag: (Int, GeoPt) -> Unit = { _, _ -> }
 
@@ -80,7 +82,7 @@ class MapOverlayController(private val context: Context, val mapView: MapView) {
             p != null && onLongPress(GeoPt(p.latitude, p.longitude))
     })
     private val touchWatcher = TouchWatcherOverlay(density) { onUserPan() }
-    private val heat = HeatmapOverlay(density)
+    private val heat = HeatmapOverlay(density) { onHeatTap(it) }
     private val draftOverlay = DraftOverlay(
         density,
         onTap = { onVertexTap(it) },
@@ -247,8 +249,31 @@ class TouchWatcherOverlay(private val density: Float, private val onPan: () -> U
 }
 
 /** Draws Wi-Fi survey samples as colour-coded dots. */
-class HeatmapOverlay(private val density: Float) : Overlay() {
+class HeatmapOverlay(private val density: Float, private val onTap: (HeatPoint) -> Boolean) : Overlay() {
     var points: List<HeatPoint> = emptyList()
+    private val hit = Point()
+
+    /** Picks the dot nearest the finger (within ~18 dp). */
+    override fun onSingleTapConfirmed(e: MotionEvent?, mapView: MapView?): Boolean {
+        val ev = e ?: return false
+        val mv = mapView ?: return false
+        val proj = mv.projection
+        val slop = 18f * density
+        var best: HeatPoint? = null
+        var bestDist = Float.MAX_VALUE
+        val g = GeoPoint(0.0, 0.0)
+        for (p in points) {
+            g.setCoords(p.lat, p.lon)
+            proj.toPixels(g, hit)
+            val d = hypot(hit.x - ev.x, hit.y - ev.y)
+            if (d < slop && d < bestDist) {
+                best = p
+                bestDist = d
+            }
+        }
+        val chosen = best ?: return false
+        return onTap(chosen)
+    }
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val pt = Point()
     private val geo = GeoPoint(0.0, 0.0)

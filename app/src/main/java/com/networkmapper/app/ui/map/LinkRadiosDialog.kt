@@ -92,7 +92,8 @@ fun LinkRadiosDialog(vm: MainViewModel, asset: Asset, onDismiss: () -> Unit) {
                                 Checkbox(checked = n.bssid in checked, onCheckedChange = { toggle(n) })
                                 Column(Modifier.weight(1f)) {
                                     Text(
-                                        n.ssid.ifEmpty { if (n.samples == 0) "(linked, not heard)" else "(hidden network)" },
+                                        vm.explicitApNames.value[n.bssid]?.let { "$it (${n.ssid.ifEmpty { "hidden" }})" }
+                                            ?: n.ssid.ifEmpty { if (n.samples == 0) "(linked, not heard)" else "(hidden network)" },
                                         fontWeight = FontWeight.Medium,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
