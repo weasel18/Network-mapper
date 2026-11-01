@@ -192,7 +192,7 @@ fun AssetListScreen(
                                 Text(
                                     listOfNotNull(
                                         p.kind.label,
-                                        p.fiberCount?.let { "${it}F" },
+                                        p.fiberCount?.takeIf { p.kind.isFiber }?.let { "${it}F" },
                                         Geo.formatDistance(Geo.pathLengthMeters(p.points)),
                                         dist?.let { "${Geo.formatDistance(it)} away" },
                                     ).joinToString(" • "),

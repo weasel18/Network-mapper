@@ -155,12 +155,13 @@ class PathEditViewModel(app: Application, handle: SavedStateHandle) : AndroidVie
         val f = form.value ?: return "Nothing to save"
         val base = repo.getPath(pathId) ?: return "Path not found"
         val count = f.fiberCount.trim()
-        val fiberCount = if (count.isEmpty()) null else count.toIntOrNull() ?: return "Fiber count must be a number"
+        // A fiber count only makes sense on fiber routes; drop a stale one if the kind was changed.
+        val fiberCount = if (!f.kind.isFiber || count.isEmpty()) null else count.toIntOrNull() ?: return "Fiber count must be a number"
         val updated = base.copy(
             kind = f.kind,
             name = f.name.trim().ifEmpty { f.kind.label },
             fiberCount = fiberCount,
-            cableType = f.cableType.trim(),
+            cableType = if (f.kind.cableLabel == null) "" else f.cableType.trim(),
             status = f.status,
             notes = f.notes.trim(),
             colorArgb = f.colorArgb,
@@ -270,23 +271,31 @@ fun PathEditScreen(
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = f.fiberCount,
-                    onValueChange = { v -> vm.update { it.copy(fiberCount = v.filter(Char::isDigit)) } },
-                    label = { Text("Fiber count") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.weight(1f),
-                )
-                OutlinedTextField(
-                    value = f.cableType,
-                    onValueChange = { v -> vm.update { it.copy(cableType = v) } },
-                    label = { Text("Cable type") },
-                    placeholder = { Text("e.g. ADSS, loose tube") },
-                    singleLine = true,
-                    modifier = Modifier.weight(1.4f),
-                )
+            // Fields depend on the route kind: only fiber has a strand count; wireless has no cable.
+            val cableLabel = f.kind.cableLabel
+            if (f.kind.isFiber || cableLabel != null) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (f.kind.isFiber) {
+                        OutlinedTextField(
+                            value = f.fiberCount,
+                            onValueChange = { v -> vm.update { it.copy(fiberCount = v.filter(Char::isDigit)) } },
+                            label = { Text("Fiber count") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    if (cableLabel != null) {
+                        OutlinedTextField(
+                            value = f.cableType,
+                            onValueChange = { v -> vm.update { it.copy(cableType = v) } },
+                            label = { Text(cableLabel) },
+                            placeholder = { Text(f.kind.cablePlaceholder) },
+                            singleLine = true,
+                            modifier = Modifier.weight(1.4f),
+                        )
+                    }
+                }
             }
             DropdownField(
                 label = "Status",

@@ -109,24 +109,36 @@ enum class PathKind(
     val colorArgb: Long,
     val dashed: Boolean,
     val suggestedFields: List<String>,
+    /** Only fiber routes have a fiber (strand) count. */
+    val isFiber: Boolean = false,
+    /** Label for the main cable / duct description field, or null when the route has no cable (wireless). */
+    val cableLabel: String? = null,
+    val cablePlaceholder: String = "",
 ) {
     FIBER_UNDERGROUND(
         "Fiber – underground", 0xFF1565C0, false,
         listOf("Cable ID", "Manufacturer", "Buffer tubes", "Conduit size", "Depth", "Install date"),
+        isFiber = true, cableLabel = "Cable type", cablePlaceholder = "e.g. loose tube, armored, microduct",
     ),
     FIBER_AERIAL(
         "Fiber – aerial", 0xFF6A1B9A, false,
         listOf("Cable ID", "Manufacturer", "Buffer tubes", "Strand / Messenger", "Install date"),
+        isFiber = true, cableLabel = "Cable type", cablePlaceholder = "e.g. ADSS, lashed, figure-8",
     ),
     CONDUIT(
         "Conduit / Duct (empty)", 0xFF757575, true,
         listOf("Conduit size", "Count", "Depth", "Pull tape"),
+        cableLabel = "Duct material", cablePlaceholder = "e.g. HDPE, PVC, innerduct",
     ),
     WIRELESS_LINK(
         "Wireless link (PtP / PtMP)", 0xFFEF6C00, true,
         listOf("Frequency", "Channel width", "Capacity", "Signal (dBm)", "SSID"),
     ),
-    COPPER("Copper / Ethernet", 0xFF2E7D32, false, listOf("Cable type", "Pairs", "Install date")),
+    COPPER(
+        "Copper / Ethernet", 0xFF2E7D32, false,
+        listOf("Pairs", "Shielded / UTP", "PoE", "Termination", "Install date"),
+        cableLabel = "Cable category", cablePlaceholder = "e.g. Cat6, Cat6A, Cat5e",
+    ),
 }
 
 @Entity(tableName = "paths", indices = [Index("siteId")])

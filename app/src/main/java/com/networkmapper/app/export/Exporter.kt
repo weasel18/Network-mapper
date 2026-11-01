@@ -398,8 +398,8 @@ object Exporter {
                     val rows = listOf(
                         "Site" to site.name,
                         "Kind" to p.kind.label,
-                        "Fiber count" to (p.fiberCount?.toString() ?: ""),
-                        "Cable type" to p.cableType,
+                        "Fiber count" to (p.fiberCount?.takeIf { p.kind.isFiber }?.toString() ?: ""),
+                        (p.kind.cableLabel ?: "Cable") to p.cableType,
                         "Status" to p.status,
                         "Length" to Geo.formatDistance(Geo.pathLengthMeters(p.points)),
                         "Notes" to p.notes,

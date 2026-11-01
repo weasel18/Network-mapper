@@ -1080,7 +1080,7 @@ private fun PathCard(path: NetPath, onEdit: () -> Unit, onEditRoute: () -> Unit,
                     Text(
                         listOfNotNull(
                             path.kind.label,
-                            path.fiberCount?.let { "${it}F" },
+                            path.fiberCount?.takeIf { path.kind.isFiber }?.let { "${it}F" },
                             path.cableType.takeIf { it.isNotBlank() },
                         ).joinToString(" • "),
                         style = MaterialTheme.typography.bodySmall,
