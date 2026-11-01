@@ -1,0 +1,29 @@
+# Option A – you have a domain name pointing at this VPS: automatic HTTPS via Caddy + Let's Encrypt.
+#   docker compose up -d
+services:
+  sync:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - sync-data:/data
+    expose:
+      - "8080"
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on: [sync]
+    ports:
+      - "80:80"
+      - "443:443"
+    env_file: .env
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  sync-data:
+  caddy-data:
+  caddy-config:

@@ -1,0 +1,21 @@
+# Option B – no domain, just the VPS IP: the sync server serves HTTPS itself with a
+# long-lived self-signed certificate (the app asks you to trust it once).
+#   ./make-cert.sh <your.vps.ip>      (creates certs/cert.pem + certs/key.pem)
+#   docker compose -f docker-compose.ip.yml up -d
+services:
+  sync:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PORT: "8443"
+      TLS_CERT: /certs/cert.pem
+      TLS_KEY: /certs/key.pem
+    volumes:
+      - sync-data:/data
+      - ./certs:/certs:ro
+    ports:
+      - "443:8443"
+
+volumes:
+  sync-data:
