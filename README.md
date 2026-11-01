@@ -64,6 +64,22 @@ poles and demarcs. It also maps Wi-Fi signal strength by GPS and attaches GPS-ta
   - When importing, choose which sites in the file to load and whether each becomes a new site or merges into an
     existing one. Duplicates are skipped. Older single-site backups import too.
 
+## Cloud sync (several phones at once)
+
+Run the small sync server in [`server/`](server/README.md) on your own VPS (Docker on Debian; automatic HTTPS with a
+domain, or a self-signed certificate for an IP-only setup). Then on each phone go to ⋮ → **Cloud sync**:
+
+1. Enter the server address and the team access key (`SYNC_KEY`), give the phone a name, and tap **Test & save**.
+2. Choose **All sites** or just the sites this phone should work on.
+3. Tap **Sync now**, and/or turn on **Automatic sync**: every 15 min to 3 h, plus about a minute after you change
+   something. You can limit it to Wi-Fi only.
+
+How it behaves:
+- Pins, routes, photos, Wi-Fi surveys, AP names and coverage patterns all sync.
+- The latest edit of a pin or route wins. Deletes sync too.
+- Phones without signal keep working and catch up later.
+- Each phone's name is recorded on the server with its changes.
+
 ## Build
 
 A GitHub Actions workflow (`.github/workflows/android.yml`) builds a debug APK on every push. Download it from the

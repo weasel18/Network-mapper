@@ -60,7 +60,7 @@ import com.networkmapper.app.util.Fmt
 import kotlinx.coroutines.launch
 
 @Composable
-fun SitesScreen(vm: MainViewModel, onBack: () -> Unit, onOpened: () -> Unit) {
+fun SitesScreen(vm: MainViewModel, onBack: () -> Unit, onOpened: () -> Unit, onOpenSync: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val sites by vm.sites.collectAsStateWithLifecycle()
@@ -122,6 +122,9 @@ fun SitesScreen(vm: MainViewModel, onBack: () -> Unit, onOpened: () -> Unit) {
                             Icon(Icons.Default.Download, null)
                             Spacer(Modifier.width(6.dp))
                             Text("Load sites from file…")
+                        }
+                        OutlinedButton(onClick = onOpenSync, modifier = Modifier.fillMaxWidth()) {
+                            Text("Cloud sync – share sites with other phones…")
                         }
                     }
                 }

@@ -144,6 +144,7 @@ fun MapScreen(
     onOpenWifi: () -> Unit,
     onOpenData: () -> Unit,
     onOpenSites: () -> Unit,
+    onOpenSync: () -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -365,6 +366,10 @@ fun MapScreen(
                             DropdownMenuItem(text = { Text("Sites – open, save & load…") }, onClick = {
                                 showMenu = false
                                 onOpenSites()
+                            })
+                            DropdownMenuItem(text = { Text("Cloud sync") }, onClick = {
+                                showMenu = false
+                                onOpenSync()
                             })
                             DropdownMenuItem(text = { Text("Export & data") }, onClick = {
                                 showMenu = false

@@ -226,6 +226,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         viewModelScope.launch { ensureValidSite() }
+        // The open site can disappear (deleted on another phone and synced): fall back to another.
+        viewModelScope.launch {
+            sites.collect { list ->
+                if (list.isNotEmpty() && list.none { it.site.id == currentSiteId.value }) ensureValidSite()
+            }
+        }
     }
 
     /** Makes sure the remembered site still exists (it may have been deleted), creating one if needed. */

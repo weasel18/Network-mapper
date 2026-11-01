@@ -46,7 +46,7 @@ import com.networkmapper.app.ui.site.rememberSiteImport
 import com.networkmapper.app.util.Geo
 
 @Composable
-fun DataScreen(vm: MainViewModel, onBack: () -> Unit, onOpenSites: () -> Unit, onOpenUnifi: () -> Unit) {
+fun DataScreen(vm: MainViewModel, onBack: () -> Unit, onOpenSites: () -> Unit, onOpenUnifi: () -> Unit, onOpenSync: () -> Unit) {
     val assets by vm.assets.collectAsStateWithLifecycle()
     val paths by vm.paths.collectAsStateWithLifecycle()
     val photoCount by vm.sitePhotoCount.collectAsStateWithLifecycle()
@@ -118,6 +118,9 @@ fun DataScreen(vm: MainViewModel, onBack: () -> Unit, onOpenSites: () -> Unit, o
                 Icon(Icons.Default.Map, null)
                 Spacer(Modifier.width(8.dp))
                 Text("Sites – create, open, rename, delete")
+            }
+            Button(onClick = onOpenSync, modifier = Modifier.fillMaxWidth()) {
+                Text("Cloud sync (your server) – share sites between phones…")
             }
             OutlinedButton(onClick = onOpenUnifi, modifier = Modifier.fillMaxWidth()) {
                 Text("Import device names from UniFi controller…")

@@ -85,8 +85,13 @@ class SyncEngine(
             pushed += changes.size
         }
 
-        // Sites
-        val dirtySites = sync.dirtySites(siteIds)
+        // Sites. Every fresh install has an empty "My site"; it's only shared once it has content or a
+        // new name, so phones don't collect each other's empty defaults.
+        val dirtySites = sync.dirtySites(siteIds).filterNot { s ->
+            s.id == com.networkmapper.app.data.DEFAULT_SITE_ID && s.name == AppDatabase.DEFAULT_SITE_NAME &&
+                db.assetDao().getForSite(s.id).isEmpty() && db.pathDao().getForSite(s.id).isEmpty() &&
+                db.wifiDao().getSessionsForSite(s.id).isEmpty()
+        }
         send(dirtySites.map { s ->
             change("sites", s.uid, s.uid, "", s.updatedAt, JSONObject().put("name", s.name).put("notes", s.notes).put("createdAt", s.createdAt))
         }) { dirtySites.forEach { sync.siteClean(it.uid, it.updatedAt) } }
