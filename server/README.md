@@ -3,6 +3,8 @@
 Lets several phones map at the same time and share sites, pins, paths, photos, Wi-Fi surveys and AP
 names. It's a single small Python program (standard library only) with a SQLite database, run with Docker.
 
+It also serves a **browser version** of the app at the same address (for example `https://map.yourcompany.com/`).
+
 ## Install on Debian
 
 ```sh
@@ -80,6 +82,26 @@ Everything lives in the `sync-data` Docker volume (`sync.db` + `photos/`):
 sudo docker compose exec sync python -c "import sqlite3;sqlite3.connect('/data/sync.db').execute(\"VACUUM INTO '/data/backup.db'\")"
 sudo docker compose cp sync:/data ./sync-backup-$(date +%F)
 ```
+
+## Browser version
+
+Open the server address in any browser (Chrome, Edge, Firefox, Safari; desktop or tablet) and sign in with
+the same access key (`SYNC_KEY`). Give the browser a name, such as "Office PC", so you can see who changed what.
+
+- **Map:** street, satellite and topographic layers, showing pins, routes and AP coverage patterns for the chosen site.
+- **Wi-Fi heatmap:** pick *strongest signal*, a single BSSID, or a pin (shows only that AP's radios).
+- **Pins:** **＋ Pin**, then click the map. Click a pin to edit its type, name, status, details, coverage pattern
+  and notes, add photos, or delete it. **Move pin** lets you drag it.
+- **Routes:** **〰 Route**, choose the kind, then click the map. Clicking a pin snaps the route to it. Drag
+  points to move them, and right-click (or Alt-click) a point to remove it. Then click **Finish**. **Edit / extend
+  route** changes an existing route the same way.
+- **Sites:** use the **⋯** button next to the site list to add, rename, zoom to or delete a site.
+- **☰ menu:** pins & routes list with search, AP names, Wi-Fi filter, phones & browsers that have synced,
+  GeoJSON export of the site, and CSV export of the Wi-Fi survey.
+- The browser checks for changes from the phones every 15 seconds. Phones pick up the browser's edits on their
+  next sync.
+
+Surveys (walking Wi-Fi scans) and GPS pins still come from the phones; browsers can't scan Wi-Fi.
 
 ## How sync works
 

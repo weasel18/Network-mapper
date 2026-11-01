@@ -24,6 +24,8 @@ API (all JSON unless noted, all require the key except /api/health):
                                            -> {"changes": [change+seq], "next": S2, "more": bool}
   PUT  /api/photos/<uid>   (raw bytes)     -> {"ok": true}
   GET  /api/photos/<uid>                   -> raw bytes / 404
+  GET  /api/devices                        -> {"devices": [{id, name, lastSeen}]}
+  GET  /, /<file>                          -> the browser app (web/), no key needed to load the page
 
 A change is {"c": collection, "id": uid, "site": siteUid, "parent": parentUid, "u": updatedAtMs,
              "d": deleted, "data": {...}}.
@@ -42,7 +44,12 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
+WEB_DIR = os.environ.get("WEB_DIR", os.path.join(os.path.dirname(os.path.abspath(__file__)), "web"))
+CONTENT_TYPES = {
+    ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
+    ".png": "image/png", ".svg": "image/svg+xml", ".ico": "image/x-icon", ".json": "application/json",
+}
 COLLECTIONS = {"sites", "assets", "paths", "photos", "sessions", "readings", "ap_names", "settings"}
 # Not tied to a site: AP names and shared settings (e.g. the Wi-Fi filter).
 GLOBAL_COLLECTIONS = {"ap_names", "settings"}
@@ -201,6 +208,11 @@ class Store:
             })
         return {"sites": out}
 
+    def devices(self):
+        with self.lock:
+            rows = self.db.execute("SELECT id, name, last_seen FROM devices ORDER BY last_seen DESC").fetchall()
+        return {"devices": [{"id": i, "name": n, "lastSeen": t} for i, n, t in rows]}
+
     def photo_path(self, uid):
         return os.path.join(self.photo_dir, uid)
 
@@ -215,10 +227,12 @@ class Handler(BaseHTTPRequestHandler):
         sys.stderr.write("%s %s\n" % (self.address_string(), fmt % args))
 
     # ---- helpers ----
-    def _send(self, status, body=b"", ctype="application/json"):
+    def _send(self, status, body=b"", ctype="application/json", cache="no-store"):
         self.send_response(status)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Cache-Control", cache)
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)
@@ -245,15 +259,32 @@ class Handler(BaseHTTPRequestHandler):
         return self.rfile.read(n) if n else b""
 
     # ---- routes ----
+    def _static(self, path):
+        """Serves the browser app from WEB_DIR (no directory listing, no path traversal)."""
+        rel = "index.html" if path in ("", "/") else path.lstrip("/")
+        full = os.path.realpath(os.path.join(WEB_DIR, rel))
+        root = os.path.realpath(WEB_DIR)
+        if not full.startswith(root + os.sep) or not os.path.isfile(full):
+            return self._error(404, "not found")
+        ext = os.path.splitext(full)[1].lower()
+        with open(full, "rb") as f:
+            body = f.read()
+        cache = "no-cache" if ext in (".html", ".js", ".css") else "public, max-age=86400"
+        self._send(200, body, CONTENT_TYPES.get(ext, "application/octet-stream"), cache)
+
     def do_GET(self):
         url = urlparse(self.path)
         if url.path == "/api/health":
             return self._json(200, {"ok": True, "version": VERSION})
+        if not url.path.startswith("/api/"):
+            return self._static(url.path)
         if not self._authorised():
             return
         q = parse_qs(url.query)
         if url.path == "/api/sites":
             return self._json(200, self.store.sites())
+        if url.path == "/api/devices":
+            return self._json(200, self.store.devices())
         if url.path == "/api/pull":
             try:
                 since = int(q.get("since", ["0"])[0])

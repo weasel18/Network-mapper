@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Network Mapper</title>
+  <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <div id="login" class="login hidden">
+    <form id="login-form" class="card">
+      <h1>Network Mapper</h1>
+      <p class="muted">Sign in with your team access key (the <code>SYNC_KEY</code> on the server).</p>
+      <label>Access key <input id="login-key" type="password" autocomplete="current-password" required></label>
+      <label>Your name (shown with your changes) <input id="login-name" type="text" placeholder="e.g. Office PC"></label>
+      <label class="row"><input id="login-remember" type="checkbox" checked> Remember on this browser</label>
+      <button type="submit">Sign in</button>
+      <p id="login-error" class="error"></p>
+    </form>
+  </div>
+
+  <header id="topbar" class="topbar hidden">
+    <strong class="brand">Network Mapper</strong>
+    <select id="site-select" title="Site"></select>
+    <button id="btn-site-menu" title="Site options">⋯</button>
+    <span class="sep"></span>
+    <button id="btn-add-pin" title="Click the map to drop a pin">＋ Pin</button>
+    <button id="btn-draw-path" title="Click the map to draw a route">〰 Route</button>
+    <span class="sep"></span>
+    <label class="row small"><input type="checkbox" id="chk-pins" checked> Pins</label>
+    <label class="row small"><input type="checkbox" id="chk-paths" checked> Routes</label>
+    <label class="row small"><input type="checkbox" id="chk-patterns" checked> Coverage</label>
+    <select id="heat-select" title="Wi-Fi heatmap">
+      <option value="">Wi-Fi heatmap: off</option>
+      <option value="*">Heatmap: strongest signal</option>
+    </select>
+    <span class="grow"></span>
+    <span id="status" class="muted small"></span>
+    <button id="btn-more" title="More">☰</button>
+  </header>
+
+  <div id="menu" class="menu hidden">
+    <button data-action="list">Pins &amp; routes list</button>
+    <button data-action="apnames">AP names</button>
+    <button data-action="filter">Wi-Fi filter</button>
+    <button data-action="devices">Phones &amp; browsers</button>
+    <button data-action="export-geojson">Export site as GeoJSON</button>
+    <button data-action="export-csv">Export Wi-Fi survey CSV</button>
+    <button data-action="logout">Sign out</button>
+  </div>
+  <div id="site-menu" class="menu hidden">
+    <button data-action="site-new">New site…</button>
+    <button data-action="site-rename">Rename / notes…</button>
+    <button data-action="site-fit">Zoom to site</button>
+    <button data-action="site-delete" class="danger">Delete site…</button>
+  </div>
+
+  <main id="main" class="hidden">
+    <div id="map"></div>
+    <div id="hint" class="hint hidden"></div>
+    <aside id="panel" class="panel hidden"></aside>
+  </main>
+
+  <script src="vendor/leaflet/leaflet.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

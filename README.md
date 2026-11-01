@@ -88,6 +88,10 @@ How it behaves:
 - Phones without signal keep working and catch up later.
 - Each phone's name is recorded on the server with its changes.
 
+The server also hosts a **browser version**: open the server address (e.g. `https://map.weaselnet.net/`) on a PC and
+sign in with the same key. From the browser you can view and edit pins, routes, coverage patterns, photos, AP names
+and the Wi-Fi filter, and see the Wi-Fi heatmaps. See [server/README.md](server/README.md#browser-version).
+
 ## Build
 
 A GitHub Actions workflow (`.github/workflows/android.yml`) builds a debug APK on every push. Download it from the
