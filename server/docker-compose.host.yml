@@ -1,0 +1,33 @@
+# Option A on hosts with their own firewall manager (Shorewall / OpenMPTCProuter, firewalld, …):
+# both containers use the host network, so Docker doesn't touch iptables. Open TCP 80 and 443 in
+# your firewall; the sync server itself only listens on 127.0.0.1:8080.
+#   sudo docker compose -f docker-compose.host.yml up -d --build
+services:
+  sync:
+    build: .
+    restart: unless-stopped
+    network_mode: host
+    env_file: .env
+    environment:
+      HOST: 127.0.0.1
+      PORT: "8080"
+    volumes:
+      - sync-data:/data
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    network_mode: host
+    depends_on: [sync]
+    env_file: .env
+    environment:
+      UPSTREAM: 127.0.0.1:8080
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  sync-data:
+  caddy-data:
+  caddy-config:

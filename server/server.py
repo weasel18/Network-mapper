@@ -12,6 +12,7 @@ Environment:
   SYNC_KEY    required  shared team access key (send as "Authorization: Bearer <key>")
   DATA_DIR    default /data
   PORT        default 8080
+  HOST        default 0.0.0.0 (use 127.0.0.1 behind a proxy on the host network)
   TLS_CERT / TLS_KEY   optional; serve HTTPS directly (for IP-only setups without a proxy)
   MAX_PHOTO_MB         default 25
 
@@ -328,12 +329,13 @@ def main():
         data_dir=os.environ.get("DATA_DIR", "/data"),
         key=os.environ.get("SYNC_KEY", ""),
         port=int(os.environ.get("PORT", "8080")),
+        host=os.environ.get("HOST", "0.0.0.0"),
         cert=os.environ.get("TLS_CERT"),
         keyfile=os.environ.get("TLS_KEY"),
         max_photo_mb=int(os.environ.get("MAX_PHOTO_MB", "25")),
     )
     scheme = "https" if os.environ.get("TLS_CERT") else "http"
-    print(f"Network Mapper sync server {VERSION} on {scheme}://0.0.0.0:{httpd.server_port}", flush=True)
+    print(f"Network Mapper sync server {VERSION} on {scheme}://{httpd.server_address[0]}:{httpd.server_port}", flush=True)
     httpd.serve_forever()
 
 

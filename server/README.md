@@ -31,6 +31,19 @@ sudo docker compose up -d
 
 Caddy gets a Let's Encrypt certificate automatically. In the app use `https://map.yourcompany.com`.
 
+#### Hosts with their own firewall (OpenMPTCProuter / Shorewall, firewalld)
+
+Shorewall drops anything not allowed and resets Docker's port rules when it restarts. Use host networking
+and open the ports in Shorewall instead:
+
+```sh
+printf 'ACCEPT\tnet\t$FW\ttcp\t80,443\n' | sudo tee -a /etc/shorewall/rules
+sudo shorewall check && sudo shorewall restart
+sudo docker compose -f docker-compose.host.yml up -d --build
+```
+
+(After an OpenMPTCProuter update, check that the line is still in `/etc/shorewall/rules`.)
+
 ### Option B – IP address only
 
 ```sh

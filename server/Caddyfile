@@ -3,5 +3,6 @@
 	request_body {
 		max_size 40MB
 	}
-	reverse_proxy sync:8080
+	# UPSTREAM is set by docker-compose.host.yml; the default is the bridged compose service.
+	reverse_proxy {$UPSTREAM:sync:8080}
 }
