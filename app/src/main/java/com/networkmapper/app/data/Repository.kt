@@ -146,6 +146,9 @@ class Repository(private val context: Context, val db: AppDatabase) {
     suspend fun getReadingsForSites(siteIds: Collection<Long>): List<WifiReading> = wifiDao.getReadingsForSites(siteIds.toList())
     suspend fun strongestReading(siteId: Long, bssids: Collection<String>): WifiReading? =
         if (bssids.isEmpty()) null else wifiDao.strongestReading(siteId, bssids.toList())
+    suspend fun deleteReadingsFor(siteId: Long, bssids: Collection<String>) {
+        if (bssids.isNotEmpty()) wifiDao.deleteReadingsFor(siteId, bssids.toList())
+    }
     suspend fun readingsForBssids(siteId: Long, bssids: Collection<String>): List<WifiReading> =
         if (bssids.isEmpty()) emptyList() else wifiDao.readingsForBssids(siteId, bssids.toList())
     suspend fun lastSeenIn(siteId: Long, south: Double, north: Double, west: Double, east: Double): Long? =

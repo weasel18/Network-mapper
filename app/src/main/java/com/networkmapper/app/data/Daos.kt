@@ -240,6 +240,9 @@ interface WifiDao {
     )
     suspend fun readingsForBssids(siteId: Long, bssids: List<String>): List<WifiReading>
 
+    @Query("DELETE FROM wifi_readings WHERE bssid IN (:bssids) AND sessionId IN (SELECT id FROM survey_sessions WHERE siteId = :siteId)")
+    suspend fun deleteReadingsFor(siteId: Long, bssids: List<String>)
+
     @Query(
         "SELECT MAX(r.timestamp) FROM wifi_readings r INNER JOIN survey_sessions s ON r.sessionId = s.id " +
             "WHERE s.siteId = :siteId AND r.latitude BETWEEN :south AND :north AND r.longitude BETWEEN :west AND :east",

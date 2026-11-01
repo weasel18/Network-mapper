@@ -70,6 +70,7 @@ class SurveyService : Service() {
         val tracker = LocationTracker(this)
         val scanner = WifiScanner(this)
         val name = requestedName?.takeIf { it.isNotBlank() } ?: "Survey ${Fmt.dateTime(System.currentTimeMillis())}"
+        val wifiFilter = app.wifiFilter.filter
 
         job = scope.launch {
             val sessionId = repo.startSession(name, siteId)
@@ -96,7 +97,7 @@ class SurveyService : Service() {
                 tracker.updates(minTimeMs = 1000L).collect { loc ->
                     lastLoc = loc
                     SurveyState.lastLocation.value = loc
-                    val conn = scanner.connected() ?: return@collect
+                    val conn = scanner.connected()?.takeIf { wifiFilter.value.allows(it.ssid, it.bssid) } ?: return@collect
                     val prev = lastConnectedLoc
                     if (prev == null || loc.distanceTo(prev) >= 2f) {
                         lastConnectedLoc = loc
@@ -113,7 +114,7 @@ class SurveyService : Service() {
                     SurveyState.lastScanAt.value = System.currentTimeMillis()
                     val loc = lastLoc ?: return@collect
                     if (System.currentTimeMillis() - loc.time > 15_000L) return@collect
-                    val fresh = results.filter { it.ageMs < 15_000L && it.bssid.isNotEmpty() }
+                    val fresh = results.filter { it.ageMs < 15_000L && it.bssid.isNotEmpty() && wifiFilter.value.allows(it.ssid, it.bssid) }
                     if (fresh.isEmpty()) return@collect
                     repo.insertReadings(fresh.map { reading(it, loc, connected = false) })
                     SurveyState.added(fresh.size)

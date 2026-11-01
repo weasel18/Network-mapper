@@ -38,6 +38,11 @@ poles and demarcs. It also maps Wi-Fi signal strength by GPS and attaches GPS-ta
 - **Pre-filled AP pins**: on an AP, wireless bridge or router pin, **Fill from Wi-Fi** suggests APs you've named,
   APs recorded near the pin and APs in range now. Tap one to fill in its MAC / BSSID (and its other radios), SSID,
   channel or frequency, and your saved name.
+- **Choose which Wi-Fi to map**: on the Wi-Fi screen, use 👁 on any network to hide that AP (all its radios) or that
+  SSID, or to **only map** certain SSIDs. The filter button there reviews and undoes these, can hide networks with no
+  name, and can remove already-recorded readings of filtered networks.
+  - Filtered networks aren't recorded and are left out of the lists, the heatmap and suggestions.
+  - The filter applies to every site and syncs between phones (sync server 1.1+).
 - **Antenna coverage patterns**: give an AP, bridge or router pin an **Omni**, **Sector** or **Directional / PtP**
   pattern with azimuth, beamwidth and range. It's drawn on the map in strong/good/weak bands (toggle in Layers).
   - Set azimuth with the slider or **Aim with phone**, which uses the compass corrected to true north.

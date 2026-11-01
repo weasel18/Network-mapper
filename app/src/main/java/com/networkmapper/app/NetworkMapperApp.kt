@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import com.networkmapper.app.data.AppDatabase
 import com.networkmapper.app.data.Repository
 import com.networkmapper.app.sync.SyncManager
+import com.networkmapper.app.wifi.WifiFilterStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -15,6 +16,10 @@ import java.io.File
 class NetworkMapperApp : Application() {
 
     lateinit var repository: Repository
+        private set
+
+    /** Which Wi-Fi networks to record and show (shared by all sites, synced). */
+    lateinit var wifiFilter: WifiFilterStore
         private set
 
     /** Cloud sync with a self-hosted server (multi-phone mapping). */
@@ -28,7 +33,8 @@ class NetworkMapperApp : Application() {
         super.onCreate()
         val db = AppDatabase.build(this)
         repository = Repository(this, db)
-        sync = SyncManager(this, db, repository).also { it.start() }
+        wifiFilter = WifiFilterStore(this)
+        sync = SyncManager(this, db, repository, wifiFilter).also { it.start() }
 
         // osmdroid: keep tile cache in app-private storage so no storage permission is needed.
         val osm = Configuration.getInstance()

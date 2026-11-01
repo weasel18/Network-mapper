@@ -42,9 +42,10 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-VERSION = "1.0.0"
-COLLECTIONS = {"sites", "assets", "paths", "photos", "sessions", "readings", "ap_names"}
-GLOBAL_COLLECTIONS = {"ap_names"}
+VERSION = "1.1.0"
+COLLECTIONS = {"sites", "assets", "paths", "photos", "sessions", "readings", "ap_names", "settings"}
+# Not tied to a site: AP names and shared settings (e.g. the Wi-Fi filter).
+GLOBAL_COLLECTIONS = {"ap_names", "settings"}
 ID_RE = re.compile(r"^[A-Za-z0-9:._-]{1,80}$")
 PHOTO_RE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 MAX_JSON_BYTES = 32 * 1024 * 1024

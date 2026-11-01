@@ -5,6 +5,12 @@ package com.networkmapper.app.ui.wifi
 import android.content.Intent
 import android.provider.Settings
 import androidx.compose.foundation.background
+import android.widget.Toast
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -84,6 +90,8 @@ fun WifiScreen(vm: MainViewModel, onBack: () -> Unit, onShowMap: () -> Unit, onO
     val site by vm.currentSite.collectAsStateWithLifecycle()
     val apNames by vm.apNames.collectAsStateWithLifecycle()
     var nameAp by remember { mutableStateOf<ScanEntry?>(null) }
+    var showFilter by remember { mutableStateOf(false) }
+    val wf by vm.wifiFilter.collectAsStateWithLifecycle()
     val heatSession by vm.heatSession.collectAsStateWithLifecycle()
     val heatFilter by vm.heatFilter.collectAsStateWithLifecycle()
 
@@ -103,8 +111,28 @@ fun WifiScreen(vm: MainViewModel, onBack: () -> Unit, onShowMap: () -> Unit, onO
             }
         }
     }
-    val connected = remember(liveScan, surveyScan) { scanner.connected() }
-    val nearby = (if (running) surveyScan else liveScan).distinctBy { it.bssid }
+    val connectedRaw = remember(liveScan, surveyScan) { scanner.connected() }
+    val nearbyAll = (if (running) surveyScan else liveScan).distinctBy { it.bssid }
+    // The Wi-Fi filter hides networks you don't want to map.
+    val connected = connectedRaw?.takeIf { wf.allows(it.ssid, it.bssid) }
+    val nearby = nearbyAll.filter { wf.allows(it.ssid, it.bssid) }
+    val shownNetworks = networks.filter { wf.allows(it.ssid, it.bssid) }
+    val hiddenHere = (nearbyAll.size - nearby.size) to (networks.size - shownNetworks.size)
+
+    fun hide(e: ScanEntry, choice: HideChoice) {
+        when (choice) {
+            HideChoice.AP -> scope.launch {
+                val radios = listOf(e.bssid) + vm.sameApRadios(e.bssid).map { it.bssid }
+                vm.hideBssids(radios)
+                Toast.makeText(context, "Hid ${radios.size} radio(s) of this AP", Toast.LENGTH_SHORT).show()
+            }
+            HideChoice.SSID -> vm.hideSsid(e.ssid)
+            HideChoice.ONLY_SSID -> {
+                vm.onlyMapSsid(e.ssid)
+                Toast.makeText(context, "Only mapping: ${(wf.onlySsids + e.ssid).joinToString()}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -117,6 +145,9 @@ fun WifiScreen(vm: MainViewModel, onBack: () -> Unit, onShowMap: () -> Unit, onO
                 },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
                 actions = {
+                    IconButton(onClick = { showFilter = true }) {
+                        Icon(Icons.Default.FilterList, "Networks to map", tint = if (wf.isEmpty) LocalContentColor.current else MaterialTheme.colorScheme.primary)
+                    }
                     TextButton(onClick = onOpenUnifi) { Text("UniFi") }
                     IconButton(onClick = {
                         vm.updateSettings { it.copy(showHeatmap = true) }
@@ -208,12 +239,15 @@ fun WifiScreen(vm: MainViewModel, onBack: () -> Unit, onShowMap: () -> Unit, onO
                                 style = MaterialTheme.typography.labelLarge,
                                 modifier = Modifier.padding(start = 16.dp, top = 8.dp),
                             )
-                            NetworkRow(connected, null, apNames[connected.bssid], onName = { nameAp = connected }) {
+                            NetworkRow(connected, null, apNames[connected.bssid], onName = { nameAp = connected }, onHide = { hide(connected, it) }) {
                                 vm.showHeatmapFor(HeatFilter.Bssid(connected.bssid, connected.ssid))
                                 onShowMap()
                             }
                             HorizontalDivider()
                         }
+                    }
+                    if (hiddenHere.first > 0) {
+                        item { FilteredNote(hiddenHere.first) { showFilter = true } }
                     }
                     if (nearby.isEmpty()) {
                         item {
@@ -225,7 +259,7 @@ fun WifiScreen(vm: MainViewModel, onBack: () -> Unit, onShowMap: () -> Unit, onO
                         }
                     }
                     items(nearby, key = { "n_" + it.bssid }) { e ->
-                        NetworkRow(e, null, apNames[e.bssid], onName = { nameAp = e }) {
+                        NetworkRow(e, null, apNames[e.bssid], onName = { nameAp = e }, onHide = { hide(e, it) }) {
                             vm.showHeatmapFor(HeatFilter.Bssid(e.bssid, e.ssid))
                             onShowMap()
                         }
@@ -252,7 +286,10 @@ fun WifiScreen(vm: MainViewModel, onBack: () -> Unit, onShowMap: () -> Unit, onO
                         ) { Text("Strongest signal at each spot (all networks)", fontWeight = FontWeight.Medium) }
                         HorizontalDivider()
                     }
-                    val bySsid = networks.filter { it.ssid.isNotEmpty() }.groupBy { it.ssid }.filter { it.value.size > 1 }
+                    if (hiddenHere.second > 0) {
+                        item { FilteredNote(hiddenHere.second) { showFilter = true } }
+                    }
+                    val bySsid = shownNetworks.filter { it.ssid.isNotEmpty() }.groupBy { it.ssid }.filter { it.value.size > 1 }
                     if (bySsid.isNotEmpty()) {
                         item {
                             Text("Networks with multiple APs", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(16.dp, 8.dp))
@@ -273,13 +310,14 @@ fun WifiScreen(vm: MainViewModel, onBack: () -> Unit, onShowMap: () -> Unit, onO
                         }
                     }
                     item { Text("Access points", style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(16.dp, 8.dp)) }
-                    items(networks, key = { "r_" + it.bssid }) { n ->
+                    items(shownNetworks, key = { "r_" + it.bssid }) { n ->
                         val entry = ScanEntry(n.ssid, n.bssid, n.bestRssi, n.frequency, "")
                         NetworkRow(
                             entry,
                             "best ${n.bestRssi} dBm • ${n.samples} samples",
                             apNames[n.bssid],
                             onName = { nameAp = entry },
+                            onHide = { hide(entry, it) },
                         ) {
                             vm.showHeatmapFor(HeatFilter.Bssid(n.bssid, n.ssid))
                             onShowMap()
@@ -328,6 +366,14 @@ fun WifiScreen(vm: MainViewModel, onBack: () -> Unit, onShowMap: () -> Unit, onO
         }
     }
 
+    if (showFilter) {
+        WifiFilterDialog(
+            vm = vm,
+            knownSsids = (nearbyAll.map { it.ssid } + networks.map { it.ssid }).distinct(),
+            onDismiss = { showFilter = false },
+        )
+    }
+
     nameAp?.let { e ->
         ApNameDialog(vm = vm, bssid = e.bssid, ssid = e.ssid, frequency = e.frequency, onDismiss = { nameAp = null })
     }
@@ -349,7 +395,28 @@ fun WifiScreen(vm: MainViewModel, onBack: () -> Unit, onShowMap: () -> Unit, onO
 }
 
 @Composable
-private fun NetworkRow(e: ScanEntry, extra: String?, name: String?, onName: () -> Unit, onClick: () -> Unit) {
+private fun FilteredNote(count: Int, onEdit: () -> Unit) {
+    Text(
+        "$count network(s) hidden by your filter – tap to review",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onEdit)
+            .padding(horizontal = 16.dp, vertical = 6.dp),
+    )
+}
+
+@Composable
+private fun NetworkRow(
+    e: ScanEntry,
+    extra: String?,
+    name: String?,
+    onName: () -> Unit,
+    onHide: (HideChoice) -> Unit,
+    onClick: () -> Unit,
+) {
+    var menu by remember { mutableStateOf(false) }
     Row(
         Modifier
             .fillMaxWidth()
@@ -376,6 +443,25 @@ private fun NetworkRow(e: ScanEntry, extra: String?, name: String?, onName: () -
             Text(Wifi.rssiQuality(e.rssi), style = MaterialTheme.typography.labelSmall)
         }
         IconButton(onClick = onName) { Icon(Icons.Default.Edit, if (name == null) "Name this AP" else "Rename AP") }
+        Box {
+            IconButton(onClick = { menu = true }) { Icon(Icons.Default.VisibilityOff, "Hide from mapping") }
+            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                DropdownMenuItem(text = { Text("Hide this AP (all its radios)") }, onClick = {
+                    menu = false
+                    onHide(HideChoice.AP)
+                })
+                if (e.ssid.isNotEmpty()) {
+                    DropdownMenuItem(text = { Text("Hide every “${e.ssid}” network") }, onClick = {
+                        menu = false
+                        onHide(HideChoice.SSID)
+                    })
+                    DropdownMenuItem(text = { Text("Only map “${e.ssid}” (add to allowed SSIDs)") }, onClick = {
+                        menu = false
+                        onHide(HideChoice.ONLY_SSID)
+                    })
+                }
+            }
+        }
     }
 }
 

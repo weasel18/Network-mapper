@@ -54,6 +54,8 @@ class SyncEngine(
     private val siteFilter: Set<String>?,
     private val getCursor: () -> Long,
     private val setCursor: (Long) -> Unit,
+    /** Shared Wi-Fi filter (synced as a single "settings" record); null = not synced. */
+    private val filters: com.networkmapper.app.wifi.WifiFilterStore? = null,
 ) {
     private val sync = db.syncDao()
     private val batch = 300
@@ -167,6 +169,12 @@ class SyncEngine(
             names.forEach { sync.apNameClean(it.bssid, it.updatedAt) }
         }
 
+        // Wi-Fi filter (one shared record)
+        filters?.takeIf { it.dirty }?.let { fs ->
+            val u = fs.updatedAt
+            send(listOf(change("settings", WIFI_FILTER_ID, "", "", u, fs.filter.value.toJson()))) { fs.markSent(u) }
+        }
+
         // Deletes
         val syncedSiteUids = sites.map { it.uid }.toSet()
         eachPage(next = { sync.tombstones(batch) }) { page ->
@@ -239,7 +247,7 @@ class SyncEngine(
         // 2) Everything else since the cursor; children whose parent hasn't arrived yet are retried.
         val pending = ArrayList<JSONObject>()
         var cursor = getCursor()
-        val rest = listOf("assets", "paths", "sessions", "readings", "photos", "ap_names")
+        val rest = listOf("assets", "paths", "sessions", "readings", "photos", "ap_names", "settings")
         while (true) {
             val page = transport.pull(cursor, siteFilter, rest, 1000)
             val arr = page.optJSONArray("changes")
@@ -258,7 +266,7 @@ class SyncEngine(
         return SyncResult(pulled = pulled, photosDown = photosDown, skipped = skipped)
     }
 
-    private val order = mapOf("assets" to 0, "paths" to 1, "sessions" to 2, "readings" to 3, "photos" to 4, "ap_names" to 5)
+    private val order = mapOf("settings" to -1, "assets" to 0, "paths" to 1, "sessions" to 2, "readings" to 3, "photos" to 4, "ap_names" to 5)
 
     private suspend fun applyAll(changes: List<JSONObject>, pending: MutableList<JSONObject>, final: Boolean) {
         val sorted = changes.sortedBy { order[it.optString("c")] ?: 9 }
@@ -270,6 +278,7 @@ class SyncEngine(
                 "sessions" -> applySession(ch)
                 "photos" -> applyPhoto(ch)
                 "ap_names" -> applyApName(ch)
+                "settings" -> applySettings(ch)
                 else -> true
             }
             if (!ok) pending += ch
@@ -453,6 +462,8 @@ class SyncEngine(
                 continue
             }
             val d = ch.optJSONObject("data") ?: continue
+            // Networks filtered out on this phone aren't stored.
+            if (filters?.filter?.value?.allows(d.optString("ssid"), d.optString("bssid")) == false) continue
             rows += WifiReading(
                 sessionId = sessionId,
                 timestamp = d.optLong("t", ch.optLong("u")),
@@ -543,6 +554,20 @@ class SyncEngine(
         sync.upsertApName(ApName(bssid, name, u, dirty = false))
         pulled++
         return true
+    }
+
+    private fun applySettings(ch: JSONObject): Boolean {
+        val fs = filters ?: return true
+        if (ch.optString("id") != WIFI_FILTER_ID || ch.optBoolean("d")) return true
+        val u = ch.optLong("u")
+        if (fs.updatedAt == u || (fs.dirty && fs.updatedAt >= u)) return true
+        fs.applyRemote(com.networkmapper.app.wifi.WifiFilter.fromJson(ch.optJSONObject("data")), u)
+        pulled++
+        return true
+    }
+
+    companion object {
+        const val WIFI_FILTER_ID = "wifi_filter"
     }
 
     private fun JSONObject.optNullable(key: String): Double? =

@@ -34,6 +34,7 @@ import com.networkmapper.app.unifi.UnifiSite
 import com.networkmapper.app.unifi.UntrustedCertificateException
 import com.networkmapper.app.unifi.UnifiMatch
 import com.networkmapper.app.unifi.UnifiStore
+import com.networkmapper.app.wifi.WifiFilter
 import com.networkmapper.app.wifi.WifiScanner
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
@@ -190,6 +191,38 @@ data class CoverageStats(
 class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     val repo = (app as NetworkMapperApp).repository
+
+    // ---------- Wi-Fi filter (which networks to record and show) ----------
+    private val filterStore = (app as NetworkMapperApp).wifiFilter
+    val wifiFilter: StateFlow<WifiFilter> = filterStore.filter
+
+    private fun allowed(ssid: String, bssid: String) = wifiFilter.value.allows(ssid, bssid)
+
+    fun updateWifiFilter(block: (WifiFilter) -> WifiFilter) {
+        filterStore.update(block)
+        (getApplication<Application>() as NetworkMapperApp).sync.requestSoon()
+    }
+
+    fun hideBssids(bssids: Collection<String>) = updateWifiFilter { it.copy(hiddenBssids = it.hiddenBssids + bssids.map { b -> b.lowercase() }) }
+    fun hideSsid(ssid: String) = updateWifiFilter { it.copy(hiddenSsids = it.hiddenSsids + ssid, onlySsids = it.onlySsids - ssid) }
+    fun onlyMapSsid(ssid: String) = updateWifiFilter { it.copy(onlySsids = it.onlySsids + ssid, hiddenSsids = it.hiddenSsids - ssid) }
+
+    /** Readings in the open site of networks the filter now excludes. */
+    suspend fun filteredReadingCount(): Int {
+        val f = wifiFilter.value
+        if (f.isEmpty) return 0
+        return repo.getNetworks(currentSiteId.value).filter { !f.allows(it.ssid, it.bssid) }.sumOf { it.samples }
+    }
+
+    /** Deletes this site's recorded readings of networks the filter excludes (on this phone). Returns the count. */
+    suspend fun purgeFilteredReadings(): Int {
+        val f = wifiFilter.value
+        val site = currentSiteId.value
+        val blocked = repo.getNetworks(site).filter { !f.allows(it.ssid, it.bssid) }
+        if (blocked.isEmpty()) return 0
+        blocked.map { it.bssid }.chunked(500).forEach { repo.deleteReadingsFor(site, it) }
+        return blocked.sumOf { it.samples }
+    }
     private val tracker = LocationTracker(app)
 
     // ---------- Location ----------
@@ -355,15 +388,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
         val scanner = WifiScanner(getApplication())
         val live = (listOfNotNull(scanner.connected()) + scanner.currentResults())
-            .filter { it.bssid.isNotEmpty() && (it.connected || it.ageMs < 120_000) }
+            .filter { it.bssid.isNotEmpty() && (it.connected || it.ageMs < 120_000) && allowed(it.ssid, it.bssid) }
             .sortedByDescending { it.rssi }
             .map { ApCandidate(it.bssid, it.ssid, it.frequency, it.rssi, names[it.bssid], ApSource.LIVE, linkedTo(it.bssid)) }
 
         val dLat = 75.0 / 111_320.0
         val dLon = dLat / cos(Math.toRadians(lat)).coerceAtLeast(0.01)
         val nearby = repo.getNetworksIn(site, lat - dLat, lat + dLat, lon - dLon, lon + dLon)
+            .filter { allowed(it.ssid, it.bssid) }
             .map { ApCandidate(it.bssid, it.ssid, it.frequency, it.bestRssi, names[it.bssid], ApSource.NEARBY, linkedTo(it.bssid)) }
         val inSite = repo.getNetworks(site)
+            .filter { allowed(it.ssid, it.bssid) }
             .map { ApCandidate(it.bssid, it.ssid, it.frequency, it.bestRssi, names[it.bssid], ApSource.SITE, linkedTo(it.bssid)) }
         // Named radios not heard here: one entry per UniFi device (its own MAC) instead of one per radio.
         val named = names.map { (b, n) -> b to n }
@@ -414,7 +449,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val me = bssid.lowercase()
         val live = WifiScanner(getApplication()).currentResults()
             .map { NetworkSummary(it.bssid, it.ssid, it.rssi, 1, it.frequency) }
-        val pool = (networks.value + live).distinctBy { it.bssid }
+        val pool = (networks.value + live).distinctBy { it.bssid }.filter { it.bssid == me || allowed(it.ssid, it.bssid) }
         val mine = pool.firstOrNull { it.bssid == me }
         val near = pool.filter { it.bssid != me && Wifi.lowDistance(me, it.bssid) <= RadioGrouping.MAX_SPAN }
         if (near.isEmpty()) return emptyList()
@@ -539,6 +574,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val dLon = dLat / cos(Math.toRadians(point.lat)).coerceAtLeast(0.01)
         val box = listOf(point.lat - dLat, point.lat + dLat, point.lon - dLon, point.lon + dLon)
         val nets = repo.getNetworksIn(site, box[0], box[1], box[2], box[3])
+            .filter { it.bssid == point.bssid || allowed(it.ssid, it.bssid) }
             .sortedWith(compareByDescending<NetworkSummary> { it.bssid == point.bssid }.thenByDescending { it.bestRssi })
         spotInfo.value = SpotInfo(point.lat, point.lon, point, nets, repo.lastSeenIn(site, box[0], box[1], box[2], box[3]))
     }
@@ -1013,18 +1049,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             } else {
                 val readings = combine(currentSiteId, heatSession) { site, session -> site to session }
                     .flatMapLatest { (site, session) -> repo.readings(site, session) }
-                combine(readings, heatFilter) { readings, filter ->
-                    toHeatPoints(readings, filter)
+                combine(readings, heatFilter, wifiFilter) { readings, filter, wf ->
+                    toHeatPoints(readings, filter, wf)
                 }
             }
         }
         .flowOn(Dispatchers.Default)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    private fun toHeatPoints(readings: List<WifiReading>, filter: HeatFilter): List<HeatPoint> {
+    private fun toHeatPoints(readings: List<WifiReading>, filter: HeatFilter, wf: WifiFilter): List<HeatPoint> {
         val subset = when (filter) {
-            HeatFilter.Strongest -> readings
-            is HeatFilter.Ssid -> readings.filter { it.ssid == filter.ssid }
+            // Filtered-out networks don't count towards "strongest"; picking one AP explicitly still shows it.
+            HeatFilter.Strongest -> readings.filter { wf.allows(it.ssid, it.bssid) }
+            is HeatFilter.Ssid -> readings.filter { it.ssid == filter.ssid && wf.allows(it.ssid, it.bssid) }
             is HeatFilter.Bssid -> readings.filter { it.bssid == filter.bssid }
             is HeatFilter.Device -> readings.filter { it.bssid in filter.bssids }
         }
@@ -1080,7 +1117,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val near = repo.getNetworksIn(
             asset.siteId, asset.latitude - dLat, asset.latitude + dLat, asset.longitude - dLon, asset.longitude + dLon,
         )
-        return near.ifEmpty { repo.getNetworks(asset.siteId) }
+        return near.ifEmpty { repo.getNetworks(asset.siteId) }.filter { allowed(it.ssid, it.bssid) }
     }
 
     /** Saves the chosen radios onto the pin and switches the heatmap to them. */

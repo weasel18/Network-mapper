@@ -109,7 +109,12 @@ class SyncStore(context: Context) {
 }
 
 /** Runs syncs (one at a time), keeps their status, and schedules automatic sync. */
-class SyncManager(private val context: Context, private val db: AppDatabase, private val repo: Repository) {
+class SyncManager(
+    private val context: Context,
+    private val db: AppDatabase,
+    private val repo: Repository,
+    private val wifiFilter: com.networkmapper.app.wifi.WifiFilterStore? = null,
+) {
     val store = SyncStore(context)
     private val mutex = Mutex()
     private val _status = MutableStateFlow(store.loadStatus())
@@ -144,7 +149,7 @@ class SyncManager(private val context: Context, private val db: AppDatabase, pri
         if (!c.configured) throw IOException("Set the sync server address and access key first.")
         _status.value = _status.value.copy(running = true, lastError = null)
         try {
-            val engine = SyncEngine(db, repo, transportFor(c), c.sites, { store.cursor }, { store.cursor = it })
+            val engine = SyncEngine(db, repo, transportFor(c), c.sites, { store.cursor }, { store.cursor = it }, wifiFilter)
             val result = withContext(Dispatchers.IO) {
                 quietUntil = Long.MAX_VALUE
                 try {
@@ -167,6 +172,12 @@ class SyncManager(private val context: Context, private val db: AppDatabase, pri
             store.saveStatus(_status.value)
             throw e
         }
+    }
+
+    /** Asks for a sync shortly (e.g. after a settings change outside the database). */
+    fun requestSoon() {
+        val c = store.load()
+        if (c.auto && c.configured) scheduleSoon(c)
     }
 
     /** (Re)schedules or cancels the periodic background sync to match the settings. */

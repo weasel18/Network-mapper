@@ -102,6 +102,12 @@ class SyncServerTest(unittest.TestCase):
         mine = [(c["id"], c["d"]) for c in changes if c["c"] != "ap_names"]  # AP names are global
         self.assertEqual(mine, [("w1", True)])
 
+    def test_05_shared_settings_are_global(self):
+        f = {"c": "settings", "id": "wifi_filter", "u": 10, "data": {"only": ["Corp"]}}
+        self.assertEqual(self.call("POST", "/api/push", {"changes": [f]})[1]["applied"], 1)
+        changes, _ = self.pull_all(sites="some-other-site", collections="settings")
+        self.assertEqual([c["data"]["only"] for c in changes], [["Corp"]])
+
     def test_04_photos(self):
         code, _ = self.call("PUT", "/api/photos/0123456789abcdef", b"\xff\xd8jpegbytes", raw=True)
         self.assertEqual(code, 200)
