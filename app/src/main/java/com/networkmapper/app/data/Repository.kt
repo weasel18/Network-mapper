@@ -14,6 +14,16 @@ class Repository(private val context: Context, val db: AppDatabase) {
     private val photoDao = db.photoDao()
     private val wifiDao = db.wifiDao()
     private val apNameDao = db.apNameDao()
+    private val syncDao = db.syncDao()
+
+    private fun now() = System.currentTimeMillis()
+
+    private suspend fun siteUid(siteId: Long): String = siteDao.get(siteId)?.uid ?: ""
+
+    /** Remember local deletes so cloud sync can push them. */
+    private suspend fun tombstone(collection: String, siteUid: String, uids: Collection<String>) {
+        if (uids.isNotEmpty()) syncDao.addTombstones(uids.map { SyncTombstone(collection, it, siteUid) })
+    }
 
     val photosDir: File
         get() = File(context.filesDir, "photos").apply { mkdirs() }
@@ -26,11 +36,18 @@ class Repository(private val context: Context, val db: AppDatabase) {
     suspend fun getSite(id: Long): Site? = siteDao.get(id)
     suspend fun getSites(): List<Site> = siteDao.getAll()
     suspend fun insertSite(site: Site): Long = siteDao.insert(site)
-    suspend fun updateSite(site: Site) = siteDao.update(site)
+    suspend fun updateSite(site: Site) = siteDao.update(site.copy(updatedAt = now(), dirty = true))
 
     /** Deletes a site and everything in it, including photo files. */
     suspend fun deleteSite(siteId: Long) {
-        deletePhotoFiles(photoDao.getForSites(listOf(siteId)))
+        val sUid = siteUid(siteId)
+        val photos = photoDao.getForSites(listOf(siteId))
+        tombstone("photos", sUid, photos.map { it.uid })
+        tombstone("assets", sUid, syncDao.assetUidsForSite(siteId))
+        tombstone("paths", sUid, syncDao.pathUidsForSite(siteId))
+        tombstone("sessions", sUid, syncDao.sessionUidsForSite(siteId))
+        if (sUid.isNotEmpty()) tombstone("sites", sUid, listOf(sUid))
+        deletePhotoFiles(photos)
         assetDao.deleteForSite(siteId) // photos cascade
         pathDao.deleteForSite(siteId)
         wifiDao.deleteSessionsForSite(siteId) // readings cascade
@@ -44,10 +61,14 @@ class Repository(private val context: Context, val db: AppDatabase) {
     suspend fun getAssetsForSite(siteId: Long): List<Asset> = assetDao.getForSite(siteId)
     suspend fun getAssetsForSites(siteIds: Collection<Long>): List<Asset> = assetDao.getForSites(siteIds.toList())
     suspend fun insertAsset(asset: Asset): Long = assetDao.insert(asset)
-    suspend fun updateAsset(asset: Asset) = assetDao.update(asset.copy(updatedAt = System.currentTimeMillis()))
+    suspend fun updateAsset(asset: Asset) = assetDao.update(asset.copy(updatedAt = now(), dirty = true))
 
     suspend fun deleteAsset(asset: Asset) {
-        deletePhotoFiles(photoDao.getForAsset(asset.id))
+        val photos = photoDao.getForAsset(asset.id)
+        val sUid = siteUid(asset.siteId)
+        tombstone("photos", sUid, photos.map { it.uid })
+        tombstone("assets", sUid, listOf(asset.uid))
+        deletePhotoFiles(photos)
         pathDao.clearStartAsset(asset.id)
         pathDao.clearEndAsset(asset.id)
         assetDao.delete(asset)
@@ -60,10 +81,14 @@ class Repository(private val context: Context, val db: AppDatabase) {
     suspend fun getPathsForSite(siteId: Long): List<NetPath> = pathDao.getForSite(siteId)
     suspend fun getPathsForSites(siteIds: Collection<Long>): List<NetPath> = pathDao.getForSites(siteIds.toList())
     suspend fun insertPath(path: NetPath): Long = pathDao.insert(path)
-    suspend fun updatePath(path: NetPath) = pathDao.update(path.copy(updatedAt = System.currentTimeMillis()))
+    suspend fun updatePath(path: NetPath) = pathDao.update(path.copy(updatedAt = now(), dirty = true))
 
     suspend fun deletePath(path: NetPath) {
-        deletePhotoFiles(photoDao.getForPath(path.id))
+        val photos = photoDao.getForPath(path.id)
+        val sUid = siteUid(path.siteId)
+        tombstone("photos", sUid, photos.map { it.uid })
+        tombstone("paths", sUid, listOf(path.uid))
+        deletePhotoFiles(photos)
         pathDao.delete(path)
     }
 
@@ -74,9 +99,11 @@ class Repository(private val context: Context, val db: AppDatabase) {
     fun photoCount(siteId: Long): Flow<Int> = photoDao.observeCountForSite(siteId)
     suspend fun getPhotosForSites(siteIds: Collection<Long>): List<Photo> = photoDao.getForSites(siteIds.toList())
     suspend fun insertPhoto(photo: Photo): Long = photoDao.insert(photo)
-    suspend fun updatePhoto(photo: Photo) = photoDao.update(photo)
+    suspend fun updatePhoto(photo: Photo) = photoDao.update(photo.copy(updatedAt = now(), dirty = true))
 
     suspend fun deletePhoto(photo: Photo) {
+        val siteId = photo.assetId?.let { assetDao.get(it)?.siteId } ?: photo.pathId?.let { pathDao.get(it)?.siteId }
+        tombstone("photos", siteId?.let { siteUid(it) } ?: "", listOf(photo.uid))
         deletePhotoFiles(listOf(photo))
         photoDao.delete(photo)
     }
@@ -94,8 +121,18 @@ class Repository(private val context: Context, val db: AppDatabase) {
         wifiDao.insertSession(SurveySession(name = name, siteId = siteId))
     suspend fun insertSession(session: SurveySession): Long = wifiDao.insertSession(session)
     suspend fun endSession(id: Long) = wifiDao.endSession(id, System.currentTimeMillis())
-    suspend fun deleteSession(id: Long) = wifiDao.deleteSession(id)
-    suspend fun deleteSurveysForSite(siteId: Long) = wifiDao.deleteSessionsForSite(siteId)
+    suspend fun deleteSession(id: Long) {
+        syncDao.sessionUids().firstOrNull { it.id == id }?.let { s ->
+            val session = syncDao.sessionByUid(s.uid)
+            tombstone("sessions", session?.let { siteUid(it.siteId) } ?: "", listOf(s.uid))
+        }
+        wifiDao.deleteSession(id)
+    }
+
+    suspend fun deleteSurveysForSite(siteId: Long) {
+        tombstone("sessions", siteUid(siteId), syncDao.sessionUidsForSite(siteId))
+        wifiDao.deleteSessionsForSite(siteId)
+    }
     suspend fun getSessionsForSite(siteId: Long): List<SurveySession> = wifiDao.getSessionsForSite(siteId)
     suspend fun getSessionsForSites(siteIds: Collection<Long>): List<SurveySession> = wifiDao.getSessionsForSites(siteIds.toList())
     suspend fun insertReadings(readings: List<WifiReading>) {
@@ -122,7 +159,12 @@ class Repository(private val context: Context, val db: AppDatabase) {
     suspend fun setApName(bssids: Collection<String>, name: String) {
         val keys = bssids.map { it.lowercase() }.distinct()
         if (keys.isEmpty()) return
-        if (name.isBlank()) apNameDao.delete(keys) else apNameDao.upsert(keys.map { ApName(it, name.trim()) })
+        if (name.isBlank()) {
+            tombstone("ap_names", "", keys)
+            apNameDao.delete(keys)
+        } else {
+            apNameDao.upsert(keys.map { ApName(it, name.trim()) })
+        }
     }
 
     suspend fun upsertApNames(names: List<ApName>) {

@@ -65,12 +65,19 @@ enum class AssetType(
 }
 
 /** A job / location. Every pin, path and Wi-Fi survey belongs to exactly one site. */
-@Entity(tableName = "sites")
+fun newUid(): String = java.util.UUID.randomUUID().toString()
+
+@Entity(tableName = "sites", indices = [Index(value = ["uid"], unique = true)])
 data class Site(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val name: String,
     val notes: String = "",
     val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis(),
+    /** Permanent id shared by every phone and the sync server. */
+    val uid: String = newUid(),
+    /** True when changed on this phone and not yet pushed to the sync server. */
+    val dirty: Boolean = true,
 )
 
 data class SiteWithCounts(
@@ -85,7 +92,7 @@ const val DEFAULT_SITE_ID = 1L
 
 val ASSET_STATUSES = listOf("Active", "Planned", "Under construction", "Inactive", "Damaged", "Abandoned")
 
-@Entity(tableName = "assets", indices = [Index("siteId")])
+@Entity(tableName = "assets", indices = [Index("siteId"), Index(value = ["uid"], unique = true)])
 data class Asset(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val type: AssetType,
@@ -100,6 +107,10 @@ data class Asset(
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
     @ColumnInfo(defaultValue = "1") val siteId: Long = DEFAULT_SITE_ID,
+    /** Permanent id shared by every phone and the sync server. */
+    val uid: String = newUid(),
+    /** True when changed on this phone and not yet pushed to the sync server. */
+    val dirty: Boolean = true,
 )
 
 fun Asset.point(): GeoPt = GeoPt(latitude, longitude)
@@ -141,7 +152,7 @@ enum class PathKind(
     ),
 }
 
-@Entity(tableName = "paths", indices = [Index("siteId")])
+@Entity(tableName = "paths", indices = [Index("siteId"), Index(value = ["uid"], unique = true)])
 data class NetPath(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val kind: PathKind,
@@ -159,11 +170,15 @@ data class NetPath(
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
     @ColumnInfo(defaultValue = "1") val siteId: Long = DEFAULT_SITE_ID,
+    /** Permanent id shared by every phone and the sync server. */
+    val uid: String = newUid(),
+    /** True when changed on this phone and not yet pushed to the sync server. */
+    val dirty: Boolean = true,
 )
 
 @Entity(
     tableName = "photos",
-    indices = [Index("assetId"), Index("pathId")],
+    indices = [Index("assetId"), Index("pathId"), Index(value = ["uid"], unique = true)],
     foreignKeys = [
         ForeignKey(entity = Asset::class, parentColumns = ["id"], childColumns = ["assetId"], onDelete = ForeignKey.CASCADE),
         ForeignKey(entity = NetPath::class, parentColumns = ["id"], childColumns = ["pathId"], onDelete = ForeignKey.CASCADE),
@@ -179,15 +194,25 @@ data class Photo(
     val accuracy: Float? = null,
     val caption: String = "",
     val takenAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis(),
+    /** Permanent id shared by every phone and the sync server. */
+    val uid: String = newUid(),
+    /** True when changed on this phone and not yet pushed to the sync server. */
+    val dirty: Boolean = true,
 )
 
-@Entity(tableName = "survey_sessions", indices = [Index("siteId")])
+@Entity(tableName = "survey_sessions", indices = [Index("siteId"), Index(value = ["uid"], unique = true)])
 data class SurveySession(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val name: String,
     val startedAt: Long = System.currentTimeMillis(),
     val endedAt: Long? = null,
     @ColumnInfo(defaultValue = "1") val siteId: Long = DEFAULT_SITE_ID,
+    val updatedAt: Long = System.currentTimeMillis(),
+    /** Permanent id shared by every phone and the sync server. */
+    val uid: String = newUid(),
+    /** True when changed on this phone and not yet pushed to the sync server. */
+    val dirty: Boolean = true,
 )
 
 data class SessionWithCount(
@@ -197,7 +222,7 @@ data class SessionWithCount(
 
 @Entity(
     tableName = "wifi_readings",
-    indices = [Index("sessionId"), Index("bssid")],
+    indices = [Index("sessionId"), Index("bssid"), Index(value = ["uid"], unique = true)],
     foreignKeys = [
         ForeignKey(entity = SurveySession::class, parentColumns = ["id"], childColumns = ["sessionId"], onDelete = ForeignKey.CASCADE),
     ],
@@ -216,6 +241,10 @@ data class WifiReading(
     val security: String = "",
     /** True when this sample came from the currently-connected network (sampled more often than scans). */
     val connected: Boolean = false,
+    /** Permanent id shared by every phone and the sync server. */
+    val uid: String = newUid(),
+    /** True when changed on this phone and not yet pushed to the sync server. */
+    val dirty: Boolean = true,
 )
 
 /** Your own name for a Wi-Fi radio, keyed by BSSID (lower-case aa:bb:cc:dd:ee:ff). Shared by all sites. */
@@ -224,6 +253,16 @@ data class ApName(
     @PrimaryKey val bssid: String,
     val name: String,
     val updatedAt: Long = System.currentTimeMillis(),
+    val dirty: Boolean = true,
+)
+
+/** Remembers a local delete so it can be pushed to the sync server. */
+@Entity(tableName = "sync_tombstones", primaryKeys = ["collection", "uid"])
+data class SyncTombstone(
+    val collection: String,
+    val uid: String,
+    val siteUid: String,
+    val deletedAt: Long = System.currentTimeMillis(),
 )
 
 data class NetworkSummary(

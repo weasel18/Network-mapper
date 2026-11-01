@@ -9,8 +9,11 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [Site::class, Asset::class, NetPath::class, Photo::class, SurveySession::class, WifiReading::class, ApName::class],
-    version = 3,
+    entities = [
+        Site::class, Asset::class, NetPath::class, Photo::class, SurveySession::class, WifiReading::class,
+        ApName::class, SyncTombstone::class,
+    ],
+    version = 4,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -21,15 +24,30 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun photoDao(): PhotoDao
     abstract fun wifiDao(): WifiDao
     abstract fun apNameDao(): ApNameDao
+    abstract fun syncDao(): SyncDao
 
     companion object {
         const val DEFAULT_SITE_NAME = "My site"
 
         private fun insertDefaultSite(db: SupportSQLiteDatabase) {
-            db.execSQL(
-                "INSERT OR IGNORE INTO sites (id, name, notes, createdAt) VALUES (?, ?, '', ?)",
-                arrayOf<Any>(DEFAULT_SITE_ID, DEFAULT_SITE_NAME, System.currentTimeMillis()),
-            )
+            val columns = HashSet<String>()
+            db.query("PRAGMA table_info(`sites`)").use { c ->
+                while (c.moveToNext()) columns += c.getString(c.getColumnIndexOrThrow("name"))
+            }
+            val now = System.currentTimeMillis()
+            if ("uid" in columns) {
+                // Fresh v4+ database: every column must be given.
+                db.execSQL(
+                    "INSERT OR IGNORE INTO sites (id, name, notes, createdAt, updatedAt, uid, dirty) VALUES (?, ?, '', ?, ?, ?, 1)",
+                    arrayOf<Any>(DEFAULT_SITE_ID, DEFAULT_SITE_NAME, now, now, newUid()),
+                )
+            } else {
+                // Migrating an older schema; later migrations add the remaining columns.
+                db.execSQL(
+                    "INSERT OR IGNORE INTO sites (id, name, notes, createdAt) VALUES (?, ?, '', ?)",
+                    arrayOf<Any>(DEFAULT_SITE_ID, DEFAULT_SITE_NAME, now),
+                )
+            }
         }
 
         /** v1 -> v2: adds sites; all existing pins, paths and surveys move into the default site. */
@@ -57,6 +75,31 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v3 -> v4: cloud sync. Every row gets a permanent shared id (uid) and a "not yet pushed" flag;
+         * sites, photos and surveys get an updatedAt; local deletes are remembered in sync_tombstones.
+         */
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                val now = System.currentTimeMillis()
+                for (table in listOf("sites", "assets", "paths", "photos", "survey_sessions", "wifi_readings")) {
+                    db.execSQL("ALTER TABLE `$table` ADD COLUMN `uid` TEXT NOT NULL DEFAULT ''")
+                    db.execSQL("ALTER TABLE `$table` ADD COLUMN `dirty` INTEGER NOT NULL DEFAULT 1")
+                    // Random 128-bit ids, one per existing row.
+                    db.execSQL("UPDATE `$table` SET `uid` = lower(hex(randomblob(16))) WHERE `uid` = ''")
+                    db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_${table}_uid` ON `$table` (`uid`)")
+                }
+                for (table in listOf("sites", "photos", "survey_sessions")) {
+                    db.execSQL("ALTER TABLE `$table` ADD COLUMN `updatedAt` INTEGER NOT NULL DEFAULT $now")
+                }
+                db.execSQL("ALTER TABLE `ap_names` ADD COLUMN `dirty` INTEGER NOT NULL DEFAULT 1")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `sync_tombstones` (`collection` TEXT NOT NULL, `uid` TEXT NOT NULL, " +
+                        "`siteUid` TEXT NOT NULL, `deletedAt` INTEGER NOT NULL, PRIMARY KEY(`collection`, `uid`))",
+                )
+            }
+        }
+
         private val createCallback = object : RoomDatabase.Callback() {
             override fun onCreate(db: SupportSQLiteDatabase) {
                 insertDefaultSite(db)
@@ -65,7 +108,7 @@ abstract class AppDatabase : RoomDatabase() {
 
         /** Shared configuration, also used by tests with an in-memory builder. */
         fun configure(builder: RoomDatabase.Builder<AppDatabase>): RoomDatabase.Builder<AppDatabase> =
-            builder.addMigrations(MIGRATION_1_2, MIGRATION_2_3).addCallback(createCallback)
+            builder.addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).addCallback(createCallback)
 
         fun build(context: Context): AppDatabase =
             configure(Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, "network_mapper.db"))

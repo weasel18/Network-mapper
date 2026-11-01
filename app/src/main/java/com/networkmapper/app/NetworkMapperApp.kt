@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import com.networkmapper.app.data.AppDatabase
 import com.networkmapper.app.data.Repository
+import com.networkmapper.app.sync.SyncManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -16,12 +17,18 @@ class NetworkMapperApp : Application() {
     lateinit var repository: Repository
         private set
 
+    /** Cloud sync with a self-hosted server (multi-phone mapping). */
+    lateinit var sync: SyncManager
+        private set
+
     /** Scope for work that must outlive a screen or service (e.g. closing a survey session). */
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     override fun onCreate() {
         super.onCreate()
-        repository = Repository(this, AppDatabase.build(this))
+        val db = AppDatabase.build(this)
+        repository = Repository(this, db)
+        sync = SyncManager(this, db, repository).also { it.start() }
 
         // osmdroid: keep tile cache in app-private storage so no storage permission is needed.
         val osm = Configuration.getInstance()
