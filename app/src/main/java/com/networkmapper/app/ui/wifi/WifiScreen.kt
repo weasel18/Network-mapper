@@ -72,7 +72,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @Composable
-fun WifiScreen(vm: MainViewModel, onBack: () -> Unit, onShowMap: () -> Unit) {
+fun WifiScreen(vm: MainViewModel, onBack: () -> Unit, onShowMap: () -> Unit, onOpenUnifi: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val running by SurveyState.running.collectAsStateWithLifecycle()
@@ -117,6 +117,7 @@ fun WifiScreen(vm: MainViewModel, onBack: () -> Unit, onShowMap: () -> Unit) {
                 },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
                 actions = {
+                    TextButton(onClick = onOpenUnifi) { Text("UniFi") }
                     IconButton(onClick = {
                         vm.updateSettings { it.copy(showHeatmap = true) }
                         onShowMap()

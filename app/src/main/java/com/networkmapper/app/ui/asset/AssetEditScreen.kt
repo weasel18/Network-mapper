@@ -58,6 +58,7 @@ import com.networkmapper.app.data.AssetType
 import com.networkmapper.app.data.Coverage
 import com.networkmapper.app.data.Photo
 import com.networkmapper.app.ui.ApCandidate
+import com.networkmapper.app.ui.ApSource
 import com.networkmapper.app.ui.MainViewModel
 import com.networkmapper.app.ui.components.AttributesEditor
 import com.networkmapper.app.ui.components.ConfirmDialog
@@ -110,6 +111,16 @@ data class AssetForm(
  * Fills an AP-type pin's form from a chosen radio and its sibling radios: MAC / BSSID list,
  * SSID(s), channel(s) or frequency, and your saved AP name (only replacing an automatic pin name).
  */
+/** Centre frequency for a Wi-Fi channel number (UniFi reports channel + band, not MHz). */
+internal fun approxFrequency(channel: Int?, band: String?): Int {
+    val ch = channel ?: return 0
+    return when {
+        band?.startsWith("6") == true -> 5950 + ch * 5
+        band?.startsWith("2") == true || ch in 1..14 -> if (ch == 14) 2484 else 2407 + ch * 5
+        else -> 5000 + ch * 5
+    }
+}
+
 internal fun fillFromAp(
     form: AssetForm,
     bssidField: String,
@@ -315,8 +326,26 @@ fun AssetEditScreen(
                     linkedCount = Wifi.parseBssids(f.attributes[bssidField] ?: "").size,
                     onPick = { chosen ->
                         val all = candidates.orEmpty()
-                        val radios = listOf(chosen) + all.filter { Wifi.likelySameAp(chosen.bssid, it.bssid) }
+                        // A UniFi-imported device knows its exact radios; otherwise use matching-MAC siblings.
+                        val device = mainVm.unifiDeviceFor(chosen.bssid)
+                        val radios = if (device != null && device.radios.isNotEmpty()) {
+                            device.radios.map { r ->
+                                all.firstOrNull { it.bssid == r.bssid }
+                                    ?: ApCandidate(r.bssid, r.ssid, approxFrequency(r.channel, r.band), null, device.name.ifBlank { null }, ApSource.NAMED, null)
+                            }
+                        } else {
+                            listOf(chosen) + all.filter { Wifi.likelySameAp(chosen.bssid, it.bssid) }
+                        }
                         vm.update { fillFromAp(it, bssidField, chosen, radios, mainVm::isDefaultPinName) }
+                        if (device != null) {
+                            vm.update { cur ->
+                                val attrs = LinkedHashMap(cur.attributes)
+                                if (device.model.isNotBlank() && attrs["Model"].isNullOrBlank()) attrs["Model"] = device.model
+                                if (device.ip.isNotBlank() && attrs["IP address"].isNullOrBlank()) attrs["IP address"] = device.ip
+                                val nm = if (device.name.isNotBlank() && mainVm.isDefaultPinName(cur.type, cur.name)) device.name else cur.name
+                                cur.copy(attributes = attrs, name = nm)
+                            }
+                        }
                         val label = chosen.savedName ?: chosen.ssid.ifEmpty { chosen.bssid }
                         val extra = radios.size - 1
                         Toast.makeText(

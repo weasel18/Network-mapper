@@ -36,6 +36,7 @@ import com.networkmapper.app.ui.map.MapScreen
 import com.networkmapper.app.ui.path.PathEditScreen
 import com.networkmapper.app.ui.photo.PhotoScreen
 import com.networkmapper.app.ui.site.SitesScreen
+import com.networkmapper.app.ui.unifi.UnifiScreen
 import com.networkmapper.app.ui.theme.NetworkMapperTheme
 import com.networkmapper.app.ui.wifi.WifiScreen
 
@@ -74,6 +75,7 @@ private object Routes {
     const val WIFI = "wifi"
     const val DATA = "data"
     const val SITES = "sites"
+    const val UNIFI = "unifi"
     const val ASSET = "asset/{id}"
     const val PATH = "path/{id}"
     const val PHOTO = "photo/{id}"
@@ -147,10 +149,18 @@ fun AppRoot() {
             )
         }
         composable(Routes.WIFI) {
-            WifiScreen(vm = vm, onBack = { nav.popBackStack() }, onShowMap = { nav.backToMap() })
+            WifiScreen(vm = vm, onBack = { nav.popBackStack() }, onShowMap = { nav.backToMap() }, onOpenUnifi = { nav.navigate(Routes.UNIFI) })
         }
         composable(Routes.DATA) {
-            DataScreen(vm = vm, onBack = { nav.popBackStack() }, onOpenSites = { nav.navigate(Routes.SITES) })
+            DataScreen(
+                vm = vm,
+                onBack = { nav.popBackStack() },
+                onOpenSites = { nav.navigate(Routes.SITES) },
+                onOpenUnifi = { nav.navigate(Routes.UNIFI) },
+            )
+        }
+        composable(Routes.UNIFI) {
+            UnifiScreen(mainVm = vm, onBack = { nav.popBackStack() })
         }
         composable(Routes.SITES) {
             SitesScreen(vm = vm, onBack = { nav.popBackStack() }, onOpened = { nav.backToMap() })

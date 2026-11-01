@@ -25,6 +25,9 @@ import com.networkmapper.app.survey.SurveyService
 import com.networkmapper.app.util.Fmt
 import com.networkmapper.app.util.Geo
 import com.networkmapper.app.util.Wifi
+import com.networkmapper.app.unifi.UnifiDevice
+import com.networkmapper.app.unifi.UnifiMatch
+import com.networkmapper.app.unifi.UnifiStore
 import com.networkmapper.app.wifi.WifiScanner
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
@@ -43,6 +46,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -347,7 +351,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             .map { ApCandidate(it.bssid, it.ssid, it.frequency, it.bestRssi, names[it.bssid], ApSource.NEARBY, linkedTo(it.bssid)) }
         val inSite = repo.getNetworks(site)
             .map { ApCandidate(it.bssid, it.ssid, it.frequency, it.bestRssi, names[it.bssid], ApSource.SITE, linkedTo(it.bssid)) }
-        val named = names.map { (b, n) -> ApCandidate(b, "", 0, null, n, ApSource.NAMED, linkedTo(b)) }
+        // Named radios not heard here: one entry per UniFi device (its own MAC) instead of one per radio.
+        val named = names.map { (b, n) -> b to n }
+            .distinctBy { (b, _) -> unifiDeviceFor(b)?.mac ?: b }
+            .map { (b, n) ->
+                val key = unifiDeviceFor(b)?.mac ?: b
+                ApCandidate(key, "", 0, null, n, ApSource.NAMED, linkedTo(key))
+            }
 
         val me = location.value
         val standingHere = me != null && Geo.distanceMeters(GeoPt(me.latitude, me.longitude), GeoPt(lat, lon)) <= 30.0
@@ -403,6 +413,55 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 siteId = currentSiteId.value,
             ),
         )
+    }
+
+    // ---------- UniFi ----------
+    val unifiStore = UnifiStore(app)
+
+    /** Devices last imported from a UniFi controller (used to pre-fill model / IP on new pins). */
+    val unifiDevices = MutableStateFlow<List<UnifiDevice>>(emptyList())
+
+    init {
+        viewModelScope.launch { unifiDevices.value = withContext(Dispatchers.IO) { unifiStore.loadDevices() } }
+    }
+
+    fun unifiDeviceFor(mac: String): UnifiDevice? = mac.lowercase().let { m -> unifiDevices.value.firstOrNull { m in it.allMacs } }
+
+    data class UnifiImportResult(val namesSaved: Int, val namesKept: Int, val pinsUpdated: Int)
+
+    /**
+     * Saves controller device names for their MACs and radio BSSIDs (keeping names you set yourself
+     * unless [replaceMyNames]) and optionally updates matching pins in the open site.
+     */
+    suspend fun importUnifi(devices: List<UnifiDevice>, saveNames: Boolean, replaceMyNames: Boolean, updatePins: Boolean): UnifiImportResult {
+        var saved = 0
+        var kept = 0
+        if (saveNames) {
+            val mine = explicitApNames.value
+            devices.filter { it.name.isNotBlank() }.forEach { d ->
+                val (keep, write) = d.allMacs.partition { !replaceMyNames && mine[it] != null && mine[it] != d.name }
+                kept += keep.size
+                if (write.isNotEmpty()) {
+                    repo.setApName(write, d.name)
+                    saved += write.size
+                }
+            }
+        }
+        var updated = 0
+        if (updatePins) {
+            for (pin in repo.getAssetsForSite(currentSiteId.value)) {
+                val device = devices.firstOrNull { UnifiMatch.matches(pin, it) } ?: continue
+                UnifiMatch.updatePin(pin, device, ::isDefaultPinName)?.let {
+                    repo.updateAsset(it)
+                    updated++
+                }
+            }
+        }
+        unifiDevices.value = withContext(Dispatchers.IO) {
+            unifiStore.saveDevices(devices)
+            unifiStore.loadDevices()
+        }
+        return UnifiImportResult(saved, kept, updated)
     }
 
     fun deleteSurveysForCurrentSite() = viewModelScope.launch {

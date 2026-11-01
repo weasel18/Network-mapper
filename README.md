@@ -43,6 +43,16 @@ poles and demarcs. It also maps Wi-Fi signal strength by GPS and attaches GPS-ta
   - Set azimuth with the slider or **Aim with phone**, which uses the compass corrected to true north.
   - **From survey** sets the range from where the pin's radios were actually recorded.
   - The pattern is stored in the pin's details, so it's included in exports and backups.
+- **UniFi import** (Wi-Fi screen → **UniFi**, or Export & data): connect to your UniFi Network controller and pull
+  device names, models, IPs and AP radio BSSIDs. Names are saved for every MAC/BSSID, so survey dots and lists show
+  UniFi names. Matching pins (by MAC) get model, IP and AP radios, plus the name if it's still automatic. New AP pins
+  pre-fill from the imported devices.
+  - Sign in with an **API key** (UniFi OS console, Network 9.0+) or a local **username & password** (UniFi OS or
+    classic controller). Username & password always includes radio BSSIDs; an API key includes them only if the
+    controller allows it.
+  - A self-signed controller certificate is trusted only after you confirm its SHA-256 fingerprint, and only that
+    exact certificate is accepted afterwards. The API key or password is stored encrypted with the Android Keystore
+    if you choose "Remember".
 - **Export / import sites**: choose which sites to export (all by default).
   - A *Full backup ZIP* holds everything: sites, pins, paths, colours, photos with captions, and Wi-Fi surveys, plus
     GeoJSON, KML and CSV for QGIS/ArcGIS/Excel.
