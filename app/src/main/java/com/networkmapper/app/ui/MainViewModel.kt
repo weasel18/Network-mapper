@@ -569,6 +569,51 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** One shared signed-in client per saved controller login. */
+    private fun unifiSession(settings: com.networkmapper.app.unifi.UnifiSettings): Triple<UnifiClient, UnifiAuth, UnifiSite> {
+        val base = UnifiClient.normalizeBase(settings.url)
+        val key = "$base|${settings.useApiKey}|${settings.username}|${settings.pinnedFingerprint}"
+        val client = unifiClient?.takeIf { unifiClientKey == key }
+            ?: UnifiClient(base, settings.pinnedFingerprint.takeIf { settings.pinnedFor == base }).also {
+                unifiClient = it
+                unifiClientKey = key
+            }
+        val auth = if (settings.useApiKey) UnifiAuth.ApiKey(settings.secret) else UnifiAuth.Login(settings.username, settings.secret)
+        return Triple(client, auth, UnifiSite(settings.siteId.ifBlank { null }, settings.siteRef, settings.siteName))
+    }
+
+    /** True when a UniFi login and site are saved (so devices can be fetched without the UniFi screen). */
+    suspend fun unifiConfigured(): Boolean = withContext(Dispatchers.IO) {
+        unifiStore.load().let { it.url.isNotBlank() && it.secret.isNotBlank() && it.siteRef.isNotBlank() }
+    }
+
+    /** Re-reads the device list from the controller into the local cache. Returns an error message, or null. */
+    suspend fun refreshUnifiDevices(): String? {
+        val settings = withContext(Dispatchers.IO) { unifiStore.load() }
+        if (settings.url.isBlank() || settings.secret.isBlank() || settings.siteRef.isBlank()) {
+            return "Sign in on the UniFi screen (with “Remember” ticked) and load devices once."
+        }
+        return try {
+            val (client, auth, site) = unifiSession(settings)
+            val list = client.devices(auth, site)
+            unifiDevices.value = withContext(Dispatchers.IO) {
+                unifiStore.saveDevices(list)
+                unifiStore.loadDevices()
+            }
+            null
+        } catch (e: UntrustedCertificateException) {
+            "The controller's certificate changed. Reconnect on the UniFi screen."
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            when (e) {
+                is java.net.UnknownHostException, is java.net.ConnectException, is java.net.SocketTimeoutException ->
+                    "Can't reach the controller (are you on its network / VPN?)"
+                else -> e.message ?: e.javaClass.simpleName
+            }
+        }
+    }
+
     /** Stop polling while the app is in the background. */
     fun pauseLive() {
         livePaused = true
@@ -601,15 +646,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 )
                 return@launch
             }
-            val base = UnifiClient.normalizeBase(settings.url)
-            val key = "$base|${settings.useApiKey}|${settings.username}|${settings.pinnedFingerprint}"
-            val client = unifiClient?.takeIf { unifiClientKey == key }
-                ?: UnifiClient(base, settings.pinnedFingerprint.takeIf { settings.pinnedFor == base }).also {
-                    unifiClient = it
-                    unifiClientKey = key
-                }
-            val auth = if (settings.useApiKey) UnifiAuth.ApiKey(settings.secret) else UnifiAuth.Login(settings.username, settings.secret)
-            val site = UnifiSite(settings.siteId.ifBlank { null }, settings.siteRef, settings.siteName)
+            val (client, auth, site) = unifiSession(settings)
             var last = (unifiLive.value as? LiveState.Ok)?.takeIf { it.device.mac == device.mac }?.live
             if (last == null) unifiLive.value = LiveState.Loading(device)
             while (isActive) {

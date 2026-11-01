@@ -95,6 +95,36 @@ class UnifiTest {
     }
 
     @Test
+    fun fillsSwitchPinFromUnifi_andApPinWithRadios() {
+        val isDefault: (AssetType, String) -> Boolean = { _, n -> n.startsWith("Switch ") || n.startsWith("Wi-Fi access point") }
+        val sw = UnifiParser.parseClassicDevices(
+            """{"data":[{"mac":"f4:92:bf:11:22:33","name":"SW-IDF1","model":"USW24P","type":"usw","ip":"10.0.0.2",
+               "version":"7.1.66","serial":"F492BF112233","port_table":[{"port_idx":1},{"port_idx":2},{"port_idx":3}]}]}""",
+        ).single()
+        assertEquals(3, sw.portCount)
+        val switchForm = com.networkmapper.app.ui.asset.AssetForm(AssetType.SWITCH, "Switch 1", "Active", "", "1", "2", null, null, mapOf("VLANs" to "10,20"))
+        val filled = com.networkmapper.app.ui.asset.fillFromUnifi(switchForm, sw, isDefault)
+        assertEquals("SW-IDF1", filled.name)
+        assertEquals("SW-IDF1", filled.attributes["Hostname"])
+        assertEquals("USW24P", filled.attributes["Model"])
+        assertEquals("10.0.0.2", filled.attributes["IP address"])
+        assertEquals("f4:92:bf:11:22:33", filled.attributes["MAC"])
+        assertEquals("3", filled.attributes["Port count"])
+        assertEquals("7.1.66", filled.attributes["Firmware"])
+        assertEquals("10,20", filled.attributes["VLANs"]) // untouched
+        // Writing the MAC links the pin to the device.
+        assertTrue(UnifiMatch.matches(Asset(type = AssetType.SWITCH, name = "x", latitude = 0.0, longitude = 0.0, attributes = filled.attributes), sw))
+
+        val ap = UnifiParser.parseClassicDevices(classic).first { it.name == "AP-Lobby" }
+        val apForm = com.networkmapper.app.ui.asset.AssetForm(AssetType.ACCESS_POINT, "Lobby ceiling", "Active", "", "1", "2", null, null, emptyMap())
+        val apFilled = com.networkmapper.app.ui.asset.fillFromUnifi(apForm, ap, isDefault)
+        assertEquals("Lobby ceiling", apFilled.name) // a name you typed is kept
+        assertEquals("74:83:c2:aa:bb:cc, 76:83:c2:ab:bb:cc, 76:83:c2:ac:bb:cc", apFilled.attributes["MAC / BSSID"])
+        assertEquals("Corp", apFilled.attributes["SSID"])
+        assertEquals("6 (2.4 GHz), 36 (5 GHz)", apFilled.attributes["Channel"])
+    }
+
+    @Test
     fun channelToFrequency() {
         assertEquals(2437, approxFrequency(6, "2.4 GHz"))
         assertEquals(5180, approxFrequency(36, "5 GHz"))

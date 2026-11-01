@@ -68,6 +68,7 @@ import com.networkmapper.app.ui.components.TypeBadge
 import com.networkmapper.app.ui.components.rememberGalleryImport
 import com.networkmapper.app.ui.components.rememberPhotoCapture
 import com.networkmapper.app.util.Geo
+import com.networkmapper.app.unifi.UnifiMatch
 import com.networkmapper.app.util.Wifi
 import com.networkmapper.app.wifi.WifiScanner
 import kotlinx.coroutines.delay
@@ -298,6 +299,39 @@ fun AssetEditScreen(
                     optionLabel = { it.label },
                     onSelect = { t -> vm.update { it.copy(type = t) } },
                     modifier = Modifier.weight(1f),
+                )
+            }
+            if (f.type in UNIFI_PIN_KINDS) {
+                // Pre-fill switches, gateways, APs and bridges from the UniFi controller's device list.
+                val unifiDevices by mainVm.unifiDevices.collectAsStateWithLifecycle()
+                val pins by mainVm.assets.collectAsStateWithLifecycle()
+                var unifiReady by remember { mutableStateOf(false) }
+                var refreshing by remember { mutableStateOf(false) }
+                var unifiMessage by remember { mutableStateOf<String?>(null) }
+                LaunchedEffect(Unit) { unifiReady = mainVm.unifiConfigured() }
+                val linkedTo = remember(unifiDevices, pins) {
+                    unifiDevices.mapNotNull { d ->
+                        pins.firstOrNull { it.id != vm.assetId && UnifiMatch.matches(it, d) }?.let { d.mac to it.name }
+                    }.toMap()
+                }
+                UnifiFillSection(
+                    pinType = f.type,
+                    devices = unifiDevices,
+                    linkedTo = linkedTo,
+                    configured = unifiReady,
+                    refreshing = refreshing,
+                    message = unifiMessage,
+                    onRefresh = {
+                        refreshing = true
+                        scope.launch {
+                            unifiMessage = mainVm.refreshUnifiDevices()
+                            refreshing = false
+                        }
+                    },
+                    onPick = { d ->
+                        vm.update { fillFromUnifi(it, d, mainVm::isDefaultPinName) }
+                        Toast.makeText(context, "Filled from ${d.displayName}", Toast.LENGTH_SHORT).show()
+                    },
                 )
             }
             val bssidField = f.type.bssidField

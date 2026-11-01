@@ -53,6 +53,9 @@ poles and demarcs. It also maps Wi-Fi signal strength by GPS and attaches GPS-ta
   - A self-signed controller certificate is trusted only after you confirm its SHA-256 fingerprint, and only that
     exact certificate is accepted afterwards. The API key or password is stored encrypted with the Android Keystore
     if you choose "Remember".
+  - **Fill from UniFi**: switch, gateway/router, AP and bridge pins list your UniFi devices (matching type first;
+    refresh pulls the latest list). Picking one fills in the name (only replacing an automatic name), hostname, model,
+    IP, MAC, firmware and port count, plus radios/SSIDs/channels for APs, and links the pin for live status.
   - **Live status**: tap a pin that matches an imported UniFi device to see live data on its card, refreshed every
     10 s: online/offline, uptime, clients, CPU/memory, uplink speed and throughput, and firmware. APs also show each
     radio's channel, Tx power, clients and utilisation; switches show port chips (up/down, speed, PoE W, uplink).

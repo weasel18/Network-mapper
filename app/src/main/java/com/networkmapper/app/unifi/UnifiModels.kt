@@ -20,6 +20,10 @@ data class UnifiDevice(
     val radios: List<UnifiRadio> = emptyList(),
     /** Integration-API device id (UUID), when known. */
     val id: String = "",
+    /** Switch ports (classic API), when known. */
+    val portCount: Int? = null,
+    val firmware: String = "",
+    val serial: String = "",
 ) {
     /** Every MAC this device can show up as: its own MAC plus each radio BSSID. */
     val allMacs: Set<String> get() = (listOf(mac) + radios.map { it.bssid }).filter { it.isNotBlank() }.toSet()
@@ -81,6 +85,9 @@ object UnifiParser {
                 kind = if (radios.isNotEmpty() && type.isBlank()) "ap" else kindFromType(type),
                 ip = d.optString("ip"),
                 radios = radios,
+                portCount = d.optJSONArray("port_table")?.length()?.takeIf { it > 0 },
+                firmware = d.optString("version"),
+                serial = d.optString("serial"),
             )
         }
     }
@@ -106,6 +113,7 @@ object UnifiParser {
                 },
                 ip = d.optString("ipAddress"),
                 id = d.optString("id"),
+                firmware = d.optString("firmwareVersion"),
             )
         }
         return devices to root.optInt("totalCount", devices.size)
@@ -133,7 +141,17 @@ object UnifiParser {
     /** Adds radio BSSIDs from a classic device list onto integration-API devices with the same MAC. */
     fun mergeRadios(devices: List<UnifiDevice>, classic: List<UnifiDevice>): List<UnifiDevice> {
         val byMac = classic.associateBy { it.mac }
-        return devices.map { d -> byMac[d.mac]?.let { c -> d.copy(radios = c.radios, kind = if (c.radios.isNotEmpty()) "ap" else d.kind) } ?: d }
+        return devices.map { d ->
+            byMac[d.mac]?.let { c ->
+                d.copy(
+                    radios = c.radios,
+                    kind = if (c.radios.isNotEmpty()) "ap" else d.kind,
+                    portCount = d.portCount ?: c.portCount,
+                    firmware = d.firmware.ifBlank { c.firmware },
+                    serial = d.serial.ifBlank { c.serial },
+                )
+            } ?: d
+        }
     }
 
     // ---- cache (so new pins can pre-fill model / IP) ----
@@ -147,7 +165,8 @@ object UnifiParser {
             }
             arr.put(
                 JSONObject().put("mac", d.mac).put("name", d.name).put("model", d.model).put("kind", d.kind)
-                    .put("ip", d.ip).put("id", d.id).put("radios", radios),
+                    .put("ip", d.ip).put("id", d.id).put("radios", radios)
+                    .put("ports", d.portCount ?: JSONObject.NULL).put("firmware", d.firmware).put("serial", d.serial),
             )
         }
         return arr.toString()
@@ -165,6 +184,9 @@ object UnifiParser {
                 kind = o.optString("kind"),
                 ip = o.optString("ip"),
                 id = o.optString("id"),
+                portCount = if (o.isNull("ports") || !o.has("ports")) null else o.optInt("ports"),
+                firmware = o.optString("firmware"),
+                serial = o.optString("serial"),
                 radios = (0 until radios.length()).mapNotNull { j ->
                     val r = radios.optJSONObject(j) ?: return@mapNotNull null
                     UnifiRadio(
