@@ -116,8 +116,12 @@ fun AppRoot() {
                 Lifecycle.Event.ON_START -> {
                     hasLocation = Permissions.hasLocation(context)
                     if (hasLocation) vm.startLocation()
+                    vm.resumeLive()
                 }
-                Lifecycle.Event.ON_STOP -> vm.stopLocation()
+                Lifecycle.Event.ON_STOP -> {
+                    vm.stopLocation()
+                    vm.pauseLive()
+                }
                 else -> Unit
             }
         }

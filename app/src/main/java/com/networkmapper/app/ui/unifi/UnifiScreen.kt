@@ -96,8 +96,23 @@ class UnifiViewModel(app: Application) : AndroidViewModel(app) {
     val canConnect: Boolean
         get() = url.isNotBlank() && secret.isNotBlank() && (useApiKey || username.isNotBlank())
 
+    private var savedSite: UnifiSite? = saved.siteRef.takeIf { it.isNotBlank() }?.let {
+        UnifiSite(saved.siteId.ifBlank { null }, it, saved.siteName)
+    }
+
     private fun persist() = store.save(
-        com.networkmapper.app.unifi.UnifiSettings(url.trim(), useApiKey, username.trim(), secret, remember, pin, pinFor),
+        com.networkmapper.app.unifi.UnifiSettings(
+            url = url.trim(),
+            useApiKey = useApiKey,
+            username = username.trim(),
+            secret = secret,
+            remember = remember,
+            pinnedFingerprint = pin,
+            pinnedFor = pinFor,
+            siteRef = savedSite?.reference ?: "",
+            siteId = savedSite?.id ?: "",
+            siteName = savedSite?.name ?: "",
+        ),
     )
 
     fun connect() {
@@ -151,6 +166,9 @@ class UnifiViewModel(app: Application) : AndroidViewModel(app) {
         val list = c.devices(auth, s).sortedWith(compareBy({ kindOrder(it.kind) }, { it.displayName.lowercase() }))
         devices = list
         selected = list.map { it.mac }.toSet()
+        // Remember the site so pins can show live data from it.
+        savedSite = s
+        persist()
     }
 
     fun trustCertificate() {

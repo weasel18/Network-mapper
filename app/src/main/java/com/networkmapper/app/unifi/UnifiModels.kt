@@ -18,6 +18,8 @@ data class UnifiDevice(
     val kind: String,
     val ip: String,
     val radios: List<UnifiRadio> = emptyList(),
+    /** Integration-API device id (UUID), when known. */
+    val id: String = "",
 ) {
     /** Every MAC this device can show up as: its own MAC plus each radio BSSID. */
     val allMacs: Set<String> get() = (listOf(mac) + radios.map { it.bssid }).filter { it.isNotBlank() }.toSet()
@@ -103,6 +105,7 @@ object UnifiParser {
                     else -> "other"
                 },
                 ip = d.optString("ipAddress"),
+                id = d.optString("id"),
             )
         }
         return devices to root.optInt("totalCount", devices.size)
@@ -142,7 +145,10 @@ object UnifiParser {
             d.radios.forEach { r ->
                 radios.put(JSONObject().put("bssid", r.bssid).put("ssid", r.ssid).put("channel", r.channel ?: JSONObject.NULL).put("band", r.band ?: JSONObject.NULL))
             }
-            arr.put(JSONObject().put("mac", d.mac).put("name", d.name).put("model", d.model).put("kind", d.kind).put("ip", d.ip).put("radios", radios))
+            arr.put(
+                JSONObject().put("mac", d.mac).put("name", d.name).put("model", d.model).put("kind", d.kind)
+                    .put("ip", d.ip).put("id", d.id).put("radios", radios),
+            )
         }
         return arr.toString()
     }
@@ -158,6 +164,7 @@ object UnifiParser {
                 model = o.optString("model"),
                 kind = o.optString("kind"),
                 ip = o.optString("ip"),
+                id = o.optString("id"),
                 radios = (0 until radios.length()).mapNotNull { j ->
                     val r = radios.optJSONObject(j) ?: return@mapNotNull null
                     UnifiRadio(
@@ -171,6 +178,215 @@ object UnifiParser {
         }
     } catch (e: Exception) {
         emptyList()
+    }
+}
+
+// ------------------------------------------------------------------ live status
+
+data class LiveRadio(
+    val band: String,
+    val channel: Int?,
+    val txPowerDbm: Int?,
+    val clients: Int?,
+    /** Channel utilisation, %. */
+    val utilization: Int?,
+)
+
+data class LivePort(
+    val index: Int,
+    val name: String,
+    val up: Boolean,
+    val speedMbps: Int?,
+    val poeWatts: Double?,
+    val isUplink: Boolean,
+)
+
+/** A snapshot of one device's live state from the controller. */
+data class UnifiLive(
+    val online: Boolean,
+    val stateLabel: String,
+    val uptimeSec: Long?,
+    val clients: Int?,
+    val cpuPct: Double?,
+    val memPct: Double?,
+    val firmware: String,
+    val ip: String,
+    val uplink: String?,
+    /** Current throughput in bits per second (device's uplink). */
+    val txBps: Double?,
+    val rxBps: Double?,
+    val satisfaction: Int?,
+    val radios: List<LiveRadio>,
+    val ports: List<LivePort>,
+    val fetchedAt: Long = System.currentTimeMillis(),
+)
+
+object UnifiLiveParser {
+
+    private fun JSONObject.num(vararg keys: String): Double? {
+        for (k in keys) {
+            if (!has(k) || isNull(k)) continue
+            val v = opt(k)
+            val d = when (v) {
+                is Number -> v.toDouble()
+                is String -> v.trim().toDoubleOrNull()
+                else -> null
+            }
+            if (d != null && !d.isNaN()) return d
+        }
+        return null
+    }
+
+    private fun stateLabel(state: Int): String = when (state) {
+        0 -> "Offline"
+        1 -> "Online"
+        2 -> "Pending adoption"
+        4 -> "Updating"
+        5 -> "Provisioning"
+        6 -> "Heartbeat missed"
+        7 -> "Adopting"
+        9 -> "Adoption error"
+        10 -> "Adoption failed"
+        11 -> "Isolated"
+        else -> "State $state"
+    }
+
+    private fun band(radio: String?): String = when (radio?.lowercase()) {
+        "ng" -> "2.4 GHz"
+        "na" -> "5 GHz"
+        "6e" -> "6 GHz"
+        else -> radio ?: "?"
+    }
+
+    private fun objects(arr: JSONArray?): List<JSONObject> =
+        if (arr == null) emptyList() else (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }
+
+    /** Classic API: GET …/api/s/{site}/stat/device/{mac} (first entry of "data"). */
+    fun parseClassic(json: String): UnifiLive? {
+        val d = JSONObject(json).optJSONArray("data")?.optJSONObject(0) ?: return null
+        val state = d.optInt("state", -1)
+        val sys = d.optJSONObject("system-stats")
+        val uplink = d.optJSONObject("uplink")
+        val uplinkLabel = uplink?.let { u ->
+            val speed = u.num("speed")?.toInt()
+            val type = u.optString("type")
+            listOfNotNull(
+                speed?.takeIf { it > 0 }?.let { formatSpeed(it) },
+                when (type) {
+                    "wire" -> "wired"
+                    "wireless" -> "wireless mesh"
+                    else -> type.takeIf { it.isNotBlank() }
+                },
+                u.num("uplink_remote_port")?.toInt()?.let { "to port $it" },
+            ).joinToString(" ").ifBlank { null }
+        }
+        val radios = objects(d.optJSONArray("radio_table_stats")).map { r ->
+            LiveRadio(
+                band = band(r.optString("radio")),
+                channel = r.num("channel")?.toInt(),
+                txPowerDbm = r.num("tx_power")?.toInt(),
+                clients = r.num("num_sta", "user-num_sta")?.toInt(),
+                utilization = r.num("cu_total")?.toInt(),
+            )
+        }
+        val ports = objects(d.optJSONArray("port_table")).map { p ->
+            LivePort(
+                index = p.optInt("port_idx"),
+                name = p.optString("name"),
+                up = p.optBoolean("up"),
+                speedMbps = p.num("speed")?.toInt()?.takeIf { it > 0 },
+                poeWatts = p.num("poe_power")?.takeIf { it > 0.0 },
+                isUplink = p.optBoolean("is_uplink"),
+            )
+        }.sortedBy { it.index }
+        return UnifiLive(
+            online = state == 1,
+            stateLabel = if (state >= 0) stateLabel(state) else "Unknown",
+            uptimeSec = d.num("uptime")?.toLong(),
+            clients = d.num("num_sta")?.toInt(),
+            cpuPct = sys?.num("cpu"),
+            memPct = sys?.num("mem"),
+            firmware = d.optString("version"),
+            ip = d.optString("ip"),
+            uplink = uplinkLabel,
+            txBps = d.num("tx_bytes-r")?.times(8),
+            rxBps = d.num("rx_bytes-r")?.times(8),
+            satisfaction = d.num("satisfaction")?.toInt()?.takeIf { it >= 0 },
+            radios = radios,
+            ports = ports,
+        )
+    }
+
+    /**
+     * Integration API: GET …/devices/{id} and …/devices/{id}/statistics/latest. Field names are read
+     * defensively since they vary between Network versions.
+     */
+    fun parseIntegration(detailJson: String, statsJson: String?): UnifiLive {
+        val d = JSONObject(detailJson)
+        val st = statsJson?.let { runCatching { JSONObject(it) }.getOrNull() }
+        val state = d.optString("state")
+        val ifaces = d.optJSONObject("interfaces")
+        val radios = objects(ifaces?.optJSONArray("radios")).map { r ->
+            val ghz = r.num("frequencyGHz")
+            LiveRadio(
+                band = ghz?.let { if (it < 3) "2.4 GHz" else if (it < 5.9) "5 GHz" else "6 GHz" } ?: "?",
+                channel = r.num("channel")?.toInt(),
+                txPowerDbm = r.num("txPowerDbm", "txPower")?.toInt(),
+                clients = r.num("clientCount", "numClients")?.toInt(),
+                utilization = r.num("channelUtilizationPct", "utilizationPct")?.toInt(),
+            )
+        }
+        val ports = objects(ifaces?.optJSONArray("ports")).map { p ->
+            LivePort(
+                index = p.num("idx", "index", "portIdx")?.toInt() ?: 0,
+                name = p.optString("name"),
+                up = p.optString("state").equals("UP", ignoreCase = true),
+                speedMbps = p.num("speedMbps", "speed")?.toInt()?.takeIf { it > 0 },
+                poeWatts = p.optJSONObject("poe")?.num("powerW", "power"),
+                isUplink = p.optBoolean("isUplink"),
+            )
+        }.sortedBy { it.index }
+        val uplink = st?.optJSONObject("uplink")
+        return UnifiLive(
+            online = state.equals("ONLINE", ignoreCase = true),
+            stateLabel = state.lowercase().replaceFirstChar { it.uppercase() }.ifBlank { "Unknown" },
+            uptimeSec = st?.num("uptimeSec")?.toLong(),
+            clients = st?.num("clientCount", "numClients")?.toInt(),
+            cpuPct = st?.num("cpuUtilizationPct"),
+            memPct = st?.num("memoryUtilizationPct"),
+            firmware = d.optString("firmwareVersion"),
+            ip = d.optString("ipAddress"),
+            uplink = null,
+            txBps = uplink?.num("txRateBps"),
+            rxBps = uplink?.num("rxRateBps"),
+            satisfaction = null,
+            radios = radios,
+            ports = ports,
+        )
+    }
+
+    fun formatSpeed(mbps: Int): String = when {
+        mbps >= 1000 && mbps % 1000 == 0 -> "${mbps / 1000} Gbps"
+        mbps >= 1000 -> String.format(java.util.Locale.US, "%.1f Gbps", mbps / 1000.0)
+        else -> "$mbps Mbps"
+    }
+
+    fun formatRate(bps: Double): String = when {
+        bps >= 1e9 -> String.format(java.util.Locale.US, "%.1f Gbps", bps / 1e9)
+        bps >= 1e6 -> String.format(java.util.Locale.US, "%.1f Mbps", bps / 1e6)
+        bps >= 1e3 -> String.format(java.util.Locale.US, "%.0f kbps", bps / 1e3)
+        else -> String.format(java.util.Locale.US, "%.0f bps", bps)
+    }
+
+    fun formatUptime(sec: Long): String {
+        val d = sec / 86_400
+        val h = (sec % 86_400) / 3_600
+        val m = (sec % 3_600) / 60
+        return when {
+            d > 0 -> "${d}d ${h}h"
+            h > 0 -> "${h}h ${m}m"
+            else -> "${m}m"
+        }
     }
 }
 

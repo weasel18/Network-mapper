@@ -157,6 +157,7 @@ fun MapScreen(
     val selected by vm.selected.collectAsStateWithLifecycle()
     val pinMove by vm.pinMove.collectAsStateWithLifecycle()
     val currentSite by vm.currentSite.collectAsStateWithLifecycle()
+    val unifiLive by vm.unifiLive.collectAsStateWithLifecycle()
     val heatFilter by vm.heatFilter.collectAsStateWithLifecycle()
     val coverage by vm.coverage.collectAsStateWithLifecycle()
     val spot by vm.spotInfo.collectAsStateWithLifecycle()
@@ -485,6 +486,8 @@ fun MapScreen(
                         },
                         onLinkRadios = { linkRadiosFor = selAsset },
                         onMove = { vm.startPinMove(selAsset) },
+                        live = unifiLive,
+                        onRefreshLive = vm::refreshLive,
                     )
                     selPath != null -> PathCard(
                         path = selPath,
@@ -994,6 +997,8 @@ private fun AssetCard(
     onSignal: () -> Unit,
     onLinkRadios: () -> Unit,
     onMove: () -> Unit,
+    live: MainViewModel.LiveState?,
+    onRefreshLive: () -> Unit,
 ) {
     Card(Modifier.fillMaxWidth(), elevation = CardDefaults.cardElevation(6.dp)) {
         Column(Modifier.padding(12.dp)) {
@@ -1064,6 +1069,8 @@ private fun AssetCard(
                     }
                 }
             }
+            // Live status from the UniFi controller when this pin matches an imported device.
+            if (live != null) UnifiLiveSection(live, onRefreshLive)
         }
     }
 }

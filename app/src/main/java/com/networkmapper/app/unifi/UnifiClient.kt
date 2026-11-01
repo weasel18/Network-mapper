@@ -110,6 +110,51 @@ class UnifiClient(baseUrl: String, private val pinnedFingerprint: String?) {
         }
     }
 
+    /** Live status of one device (by MAC; [deviceId] is the integration-API id, used with API keys). */
+    suspend fun liveDevice(auth: UnifiAuth, site: UnifiSite, mac: String, deviceId: String?): UnifiLive = withContext(Dispatchers.IO) {
+        val macPath = enc(mac.lowercase())
+        when (auth) {
+            is UnifiAuth.ApiKey -> {
+                // Classic stats are the richest; newer consoles accept the API key there.
+                val classic = try {
+                    request("GET", "/proxy/network/api/s/${enc(site.reference)}/stat/device/$macPath", key = auth.key)
+                } catch (e: IOException) {
+                    null
+                }
+                if (classic != null && classic.first in 200..299) {
+                    UnifiLiveParser.parseClassic(classic.second)?.let { return@withContext it }
+                }
+                val siteId = site.id?.takeIf { it.isNotBlank() }
+                    ?: throw UnifiException("Open the UniFi screen and load devices once to enable live data.")
+                val id = deviceId?.takeIf { it.isNotBlank() }
+                    ?: throw UnifiException("Device id unknown – re-import devices on the UniFi screen.")
+                val base = "/proxy/network/integration/v1/sites/${enc(siteId)}/devices/${enc(id)}"
+                val (code, body) = request("GET", base, key = auth.key)
+                check(code, body, "read device")
+                val stats = try {
+                    request("GET", "$base/statistics/latest", key = auth.key).takeIf { it.first in 200..299 }?.second
+                } catch (e: IOException) {
+                    null
+                }
+                UnifiLiveParser.parseIntegration(body, stats)
+            }
+            is UnifiAuth.Login -> {
+                if (cookies.isEmpty()) login(auth)
+                val path = "$apiPrefix/api/s/${enc(site.reference)}/stat/device/$macPath"
+                var result = request("GET", path)
+                if (result.first == 401) {
+                    // Session expired: sign in again once.
+                    cookies.clear()
+                    csrf = null
+                    login(auth)
+                    result = request("GET", path)
+                }
+                check(result.first, result.second, "read device")
+                UnifiLiveParser.parseClassic(result.second) ?: throw UnifiException("The controller doesn't list this device any more.")
+            }
+        }
+    }
+
     // ------------------------------------------------------------------ internals
 
     private fun login(auth: UnifiAuth.Login) {

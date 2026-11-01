@@ -25,7 +25,12 @@ import com.networkmapper.app.survey.SurveyService
 import com.networkmapper.app.util.Fmt
 import com.networkmapper.app.util.Geo
 import com.networkmapper.app.util.Wifi
+import com.networkmapper.app.unifi.UnifiAuth
+import com.networkmapper.app.unifi.UnifiClient
 import com.networkmapper.app.unifi.UnifiDevice
+import com.networkmapper.app.unifi.UnifiLive
+import com.networkmapper.app.unifi.UnifiSite
+import com.networkmapper.app.unifi.UntrustedCertificateException
 import com.networkmapper.app.unifi.UnifiMatch
 import com.networkmapper.app.unifi.UnifiStore
 import com.networkmapper.app.wifi.WifiScanner
@@ -45,6 +50,8 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -509,6 +516,94 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun closeSpot() {
         spotInfo.value = null
+    }
+
+    // ---------- UniFi live status for the selected pin ----------
+    sealed interface LiveState {
+        val device: UnifiDevice
+
+        data class Loading(override val device: UnifiDevice) : LiveState
+        data class Ok(override val device: UnifiDevice, val live: UnifiLive) : LiveState
+        data class Failed(override val device: UnifiDevice, val message: String, val last: UnifiLive? = null) : LiveState
+    }
+
+    val unifiLive = MutableStateFlow<LiveState?>(null)
+    private var liveJob: Job? = null
+    private var livePaused = false
+    private var unifiClient: UnifiClient? = null
+    private var unifiClientKey: String? = null
+
+    init {
+        // Follow the selection: poll the controller while a UniFi-matched pin's card is open.
+        viewModelScope.launch {
+            combine(selected, unifiDevices) { sel, _ -> sel }.collect { restartLive(it) }
+        }
+    }
+
+    /** Stop polling while the app is in the background. */
+    fun pauseLive() {
+        livePaused = true
+        liveJob?.cancel()
+    }
+
+    fun resumeLive() {
+        livePaused = false
+        restartLive(selected.value)
+    }
+
+    fun refreshLive() = restartLive(selected.value)
+
+    private fun restartLive(sel: Selection?) {
+        liveJob?.cancel()
+        val assetId = (sel as? Selection.AssetSel)?.id
+        val asset = assetId?.let { id -> assets.value.firstOrNull { it.id == id } }
+        val device = asset?.let { a -> unifiDevices.value.firstOrNull { UnifiMatch.matches(a, it) } }
+        if (device == null) {
+            unifiLive.value = null
+            return
+        }
+        if (livePaused) return
+        liveJob = viewModelScope.launch {
+            val settings = withContext(Dispatchers.IO) { unifiStore.load() }
+            if (settings.url.isBlank() || settings.secret.isBlank() || settings.siteRef.isBlank()) {
+                unifiLive.value = LiveState.Failed(
+                    device,
+                    "Sign in on the UniFi screen with “Remember” ticked and load devices to see live status.",
+                )
+                return@launch
+            }
+            val base = UnifiClient.normalizeBase(settings.url)
+            val key = "$base|${settings.useApiKey}|${settings.username}|${settings.pinnedFingerprint}"
+            val client = unifiClient?.takeIf { unifiClientKey == key }
+                ?: UnifiClient(base, settings.pinnedFingerprint.takeIf { settings.pinnedFor == base }).also {
+                    unifiClient = it
+                    unifiClientKey = key
+                }
+            val auth = if (settings.useApiKey) UnifiAuth.ApiKey(settings.secret) else UnifiAuth.Login(settings.username, settings.secret)
+            val site = UnifiSite(settings.siteId.ifBlank { null }, settings.siteRef, settings.siteName)
+            var last = (unifiLive.value as? LiveState.Ok)?.takeIf { it.device.mac == device.mac }?.live
+            if (last == null) unifiLive.value = LiveState.Loading(device)
+            while (isActive) {
+                try {
+                    val live = client.liveDevice(auth, site, device.mac, device.id)
+                    last = live
+                    unifiLive.value = LiveState.Ok(device, live)
+                } catch (e: UntrustedCertificateException) {
+                    unifiLive.value = LiveState.Failed(device, "The controller's certificate changed. Reconnect on the UniFi screen.", last)
+                    break
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    val msg = when (e) {
+                        is java.net.UnknownHostException, is java.net.ConnectException, is java.net.SocketTimeoutException ->
+                            "Can't reach the controller (are you on its network / VPN?)"
+                        else -> e.message ?: e.javaClass.simpleName
+                    }
+                    unifiLive.value = LiveState.Failed(device, msg, last)
+                }
+                delay(10_000)
+            }
+        }
     }
 
     fun focusOn(pt: GeoPt, sel: Selection? = null) {

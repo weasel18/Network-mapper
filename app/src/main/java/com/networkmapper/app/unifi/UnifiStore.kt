@@ -21,6 +21,10 @@ data class UnifiSettings(
     /** Pinned SHA-256 fingerprint of the controller certificate the user trusted. */
     val pinnedFingerprint: String? = null,
     val pinnedFor: String? = null,
+    /** Last site loaded on the UniFi screen; live data uses it. */
+    val siteRef: String = "",
+    val siteId: String = "",
+    val siteName: String = "",
 )
 
 /** Controller settings; the API key / password is encrypted with an Android Keystore key. */
@@ -37,6 +41,9 @@ class UnifiStore(context: Context) {
         remember = prefs.getBoolean("remember", true),
         pinnedFingerprint = prefs.getString("pin", null),
         pinnedFor = prefs.getString("pinFor", null),
+        siteRef = prefs.getString("siteRef", "") ?: "",
+        siteId = prefs.getString("siteId", "") ?: "",
+        siteName = prefs.getString("siteName", "") ?: "",
     )
 
     fun save(s: UnifiSettings) {
@@ -48,6 +55,9 @@ class UnifiStore(context: Context) {
             .putString("secret", if (s.remember && s.secret.isNotEmpty()) encrypt(s.secret) else null)
             .putString("pin", s.pinnedFingerprint)
             .putString("pinFor", s.pinnedFor)
+            .putString("siteRef", s.siteRef)
+            .putString("siteId", s.siteId)
+            .putString("siteName", s.siteName)
             .apply()
     }
 
