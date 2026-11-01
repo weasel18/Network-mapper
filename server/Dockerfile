@@ -1,8 +1,8 @@
 FROM python:3.12-slim
 WORKDIR /app
 COPY server.py .
-RUN useradd --system --uid 10001 sync && mkdir /data && chown sync /data
-USER sync
+RUN useradd --system --uid 10001 --no-create-home mapsync && mkdir -p /data && chown mapsync /data
+USER mapsync
 ENV DATA_DIR=/data PORT=8080 PYTHONUNBUFFERED=1
 VOLUME /data
 EXPOSE 8080
