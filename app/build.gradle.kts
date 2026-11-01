@@ -19,6 +19,12 @@ android {
         val build = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
         versionCode = build
         versionName = "1.2.$build"
+
+        // Built-in cloud sync server. The access key is NOT in the source: CI passes it from the
+        // repository secret SYNC_KEY (locally: SYNC_KEY env var or -PsyncKey=...). Empty = enter it in the app.
+        buildConfigField("String", "DEFAULT_SYNC_URL", "\"https://map.weaselnet.net\"")
+        val syncKey = (System.getenv("SYNC_KEY") ?: (project.findProperty("syncKey") as String?) ?: "").trim()
+        buildConfigField("String", "DEFAULT_SYNC_KEY", "\"" + syncKey.replace("\\", "\\\\").replace("\"", "\\\"") + "\"")
     }
 
     signingConfigs {

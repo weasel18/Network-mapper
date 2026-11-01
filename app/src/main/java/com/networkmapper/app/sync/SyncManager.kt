@@ -12,6 +12,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import com.networkmapper.app.BuildConfig
 import com.networkmapper.app.NetworkMapperApp
 import com.networkmapper.app.data.AppDatabase
 import com.networkmapper.app.data.Repository
@@ -58,11 +59,14 @@ class SyncStore(context: Context) {
     val deviceId: String
         get() = prefs.getString("deviceId", null) ?: UUID.randomUUID().toString().also { prefs.edit().putString("deviceId", it).apply() }
 
+    /** Built-in defaults (server address in the code, key injected at build time) until the user changes them. */
+    private val builtInKey = BuildConfig.DEFAULT_SYNC_KEY
+
     fun load(): SyncConfig = SyncConfig(
-        url = prefs.getString("url", "") ?: "",
-        key = prefs.getString("key", null)?.let { box.decrypt(it) } ?: "",
+        url = prefs.getString("url", null)?.takeIf { it.isNotBlank() } ?: BuildConfig.DEFAULT_SYNC_URL,
+        key = prefs.getString("key", null)?.let { box.decrypt(it) }?.takeIf { it.isNotBlank() } ?: builtInKey,
         deviceName = prefs.getString("deviceName", null) ?: (Build.MODEL ?: "Android"),
-        auto = prefs.getBoolean("auto", false),
+        auto = prefs.getBoolean("auto", builtInKey.isNotBlank()),
         intervalMin = prefs.getInt("interval", 15),
         wifiOnly = prefs.getBoolean("wifiOnly", false),
         sites = prefs.getString("sites", null)?.let { s -> if (s == "*") null else s.split(',').filter { it.isNotBlank() }.toSet() },

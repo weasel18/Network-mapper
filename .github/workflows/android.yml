@@ -21,6 +21,9 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Build debug APK and run unit tests
+        env:
+          # Repository secret (Settings → Secrets and variables → Actions); built into the app as the default sync key.
+          SYNC_KEY: ${{ secrets.SYNC_KEY }}
         run: ./gradlew --no-daemon assembleDebug testDebugUnitTest
 
       - name: Upload APK
