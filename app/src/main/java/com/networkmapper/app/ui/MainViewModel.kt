@@ -24,6 +24,7 @@ import com.networkmapper.app.photo.PhotoStorage
 import com.networkmapper.app.survey.SurveyService
 import com.networkmapper.app.util.Fmt
 import com.networkmapper.app.util.Geo
+import com.networkmapper.app.util.RadioGrouping
 import com.networkmapper.app.util.Wifi
 import com.networkmapper.app.unifi.UnifiAuth
 import com.networkmapper.app.unifi.UnifiClient
@@ -397,8 +398,30 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Other recorded radios in this site that look like the same physical AP (other band / SSID). */
-    fun siblingRadios(bssid: String): List<NetworkSummary> =
-        networks.value.filter { Wifi.likelySameAp(bssid.lowercase(), it.bssid) }
+    suspend fun siblingRadios(bssid: String): List<NetworkSummary> = sameApRadios(bssid)
+
+    /**
+     * Every other radio (BSSID) of the same physical AP as [bssid]: recorded in this site or in range
+     * now, matched by MAC pattern and confirmed by survey RSSI where there's enough data.
+     */
+    suspend fun sameApRadios(bssid: String): List<NetworkSummary> {
+        val me = bssid.lowercase()
+        val live = WifiScanner(getApplication()).currentResults()
+            .map { NetworkSummary(it.bssid, it.ssid, it.rssi, 1, it.frequency) }
+        val pool = (networks.value + live).distinctBy { it.bssid }
+        val mine = pool.firstOrNull { it.bssid == me }
+        val near = pool.filter { it.bssid != me && Wifi.lowDistance(me, it.bssid) <= RadioGrouping.MAX_SPAN }
+        if (near.isEmpty()) return emptyList()
+        val readings = repo.readingsForBssids(currentSiteId.value, near.map { it.bssid } + me)
+        val grouped = withContext(Dispatchers.Default) {
+            RadioGrouping.sameAp(
+                RadioGrouping.Radio(me, mine?.frequency ?: 0),
+                near.map { RadioGrouping.Radio(it.bssid, it.frequency) },
+                readings,
+            ).mapTo(HashSet()) { it.bssid }
+        }
+        return near.filter { it.bssid in grouped }
+    }
 
     /**
      * Drops an access-point pin where these radios were heard strongest, linked to them so

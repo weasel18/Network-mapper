@@ -324,9 +324,10 @@ fun AssetEditScreen(
                 ApFillSection(
                     candidates = candidates,
                     linkedCount = Wifi.parseBssids(f.attributes[bssidField] ?: "").size,
-                    onPick = { chosen ->
+                    onPick = { chosen -> scope.launch {
                         val all = candidates.orEmpty()
-                        // A UniFi-imported device knows its exact radios; otherwise use matching-MAC siblings.
+                        // A UniFi-imported device knows its exact radios; otherwise group the AP's
+                        // SSIDs / bands by MAC pattern, confirmed by survey signal.
                         val device = mainVm.unifiDeviceFor(chosen.bssid)
                         val radios = if (device != null && device.radios.isNotEmpty()) {
                             device.radios.map { r ->
@@ -334,7 +335,10 @@ fun AssetEditScreen(
                                     ?: ApCandidate(r.bssid, r.ssid, approxFrequency(r.channel, r.band), null, device.name.ifBlank { null }, ApSource.NAMED, null)
                             }
                         } else {
-                            listOf(chosen) + all.filter { Wifi.likelySameAp(chosen.bssid, it.bssid) }
+                            listOf(chosen) + mainVm.sameApRadios(chosen.bssid).map { n ->
+                                all.firstOrNull { it.bssid == n.bssid }
+                                    ?: ApCandidate(n.bssid, n.ssid, n.frequency, n.bestRssi, null, ApSource.SITE, null)
+                            }
                         }
                         vm.update { fillFromAp(it, bssidField, chosen, radios, mainVm::isDefaultPinName) }
                         if (device != null) {
@@ -353,7 +357,7 @@ fun AssetEditScreen(
                             "Filled from $label" + if (extra > 0) " (+$extra other radio${if (extra == 1) "" else "s"})" else "",
                             Toast.LENGTH_SHORT,
                         ).show()
-                    },
+                    } },
                 )
                 val linked = Wifi.parseBssids(f.attributes[bssidField] ?: "")
                 PatternEditor(

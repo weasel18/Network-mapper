@@ -32,6 +32,7 @@ import com.networkmapper.app.data.Asset
 import com.networkmapper.app.data.NetworkSummary
 import com.networkmapper.app.ui.MainViewModel
 import com.networkmapper.app.util.Wifi
+import kotlinx.coroutines.launch
 
 /**
  * Lets the user pick which surveyed radios (BSSIDs) belong to a mapped AP / bridge pin.
@@ -52,12 +53,20 @@ fun LinkRadiosDialog(vm: MainViewModel, asset: Asset, onDismiss: () -> Unit) {
         candidates = found + missing
     }
 
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+
     fun toggle(n: NetworkSummary) {
-        checked = if (n.bssid in checked) {
-            checked - n.bssid
-        } else {
-            val siblings = candidates.orEmpty().map { it.bssid }.filter { Wifi.likelySameAp(n.bssid, it) }
-            checked + n.bssid + siblings
+        if (n.bssid in checked) {
+            checked = checked - n.bssid
+            return
+        }
+        checked = checked + n.bssid
+        // Also tick the AP's other SSIDs / bands, adding any that weren't listed yet.
+        scope.launch {
+            val siblings = vm.sameApRadios(n.bssid)
+            val listed = candidates.orEmpty()
+            candidates = listed + siblings.filter { s -> listed.none { it.bssid == s.bssid } }
+            checked = checked + siblings.map { it.bssid }
         }
     }
 
@@ -68,7 +77,7 @@ fun LinkRadiosDialog(vm: MainViewModel, asset: Asset, onDismiss: () -> Unit) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
                     "Pick this device's BSSID(s). Networks heard closest to the pin are listed first; " +
-                        "ticking one also ticks its other bands/SSIDs with a matching MAC.",
+                        "ticking one also ticks the same AP's other SSIDs and bands (matched by MAC and survey signal).",
                     style = MaterialTheme.typography.bodySmall,
                 )
                 val list = candidates

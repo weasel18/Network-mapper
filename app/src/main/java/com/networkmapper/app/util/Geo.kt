@@ -101,13 +101,41 @@ object Wifi {
     fun parseBssids(text: String): Set<String> =
         macRegex.findAll(text).map { m -> (1..6).joinToString(":") { m.groupValues[it].lowercase() } }.toSet()
 
+    private fun macBytes(mac: String): IntArray? {
+        val parts = mac.split(':')
+        if (parts.size != 6) return null
+        return parts.map { it.toIntOrNull(16) ?: return null }.toIntArray()
+    }
+
     /**
-     * Heuristic for "another radio / SSID of the same physical AP": vendors usually vary only the
-     * last octet, or only the first (locally-administered) octet, between virtual BSSIDs.
+     * MAC-pattern test for "another radio / SSID of the same physical AP". Covers the common
+     * vendor schemes for per-SSID / per-band BSSIDs:
+     *  - sequential ("next-up") addresses, including carries into the 5th/4th octet (within 32);
+     *  - the locally-administered bit and VAP index bits set in the first octet (only its high
+     *    nibble must match);
+     *  - UniFi-style radios that also step the 4th octet (last two octets equal, 4th within 16).
+     * Octets 2 and 3 must always match.
      */
     fun likelySameAp(a: String, b: String): Boolean {
-        if (a.length != 17 || b.length != 17 || a == b) return false
-        return a.substring(0, 14) == b.substring(0, 14) || a.substring(3) == b.substring(3)
+        val x = macBytes(a.lowercase()) ?: return false
+        val y = macBytes(b.lowercase()) ?: return false
+        if (x.contentEquals(y)) return false
+        if (x[1] != y[1] || x[2] != y[2]) return false
+        if ((x[0] and 0xF0) != (y[0] and 0xF0)) return false
+        val lowX = (x[3] shl 16) or (x[4] shl 8) or x[5]
+        val lowY = (y[3] shl 16) or (y[4] shl 8) or y[5]
+        if (kotlin.math.abs(lowX - lowY) <= 32) return true
+        return x[4] == y[4] && x[5] == y[5] && kotlin.math.abs(x[3] - y[3]) <= 16
+    }
+
+    /** Distance between the low 24 bits of two MACs (used to stop groups from chaining across APs). */
+    fun lowDistance(a: String, b: String): Int {
+        val x = macBytes(a.lowercase()) ?: return Int.MAX_VALUE
+        val y = macBytes(b.lowercase()) ?: return Int.MAX_VALUE
+        val lowX = (x[3] shl 16) or (x[4] shl 8) or x[5]
+        val lowY = (y[3] shl 16) or (y[4] shl 8) or y[5]
+        val low16Same = x[4] == y[4] && x[5] == y[5]
+        return if (low16Same) kotlin.math.abs(x[3] - y[3]) else kotlin.math.abs(lowX - lowY)
     }
 
     /** Legend entries: label to colour. */

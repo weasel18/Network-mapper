@@ -14,6 +14,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -46,10 +47,12 @@ fun ApNameDialog(
     val key = bssid.lowercase()
     val existing = vm.explicitApNames.value[key]
     val linkedPin = vm.assets.value.firstOrNull { key in vm.linkedBssids(it) }
-    val siblings = remember(key) { vm.siblingRadios(key) }
+    // Other SSIDs / bands of the same physical AP (MAC pattern, confirmed by survey RSSI).
+    var siblings by remember { mutableStateOf<List<com.networkmapper.app.data.NetworkSummary>>(emptyList()) }
 
     var name by remember { mutableStateOf(existing ?: linkedPin?.name ?: "") }
-    var includeSiblings by remember { mutableStateOf(siblings.isNotEmpty()) }
+    var includeSiblings by remember { mutableStateOf(true) }
+    LaunchedEffect(key) { siblings = vm.sameApRadios(key) }
     var dropPin by remember { mutableStateOf(false) }
 
     AlertDialog(
@@ -80,10 +83,12 @@ fun ApNameDialog(
                     CheckLine(
                         checked = includeSiblings,
                         onChange = { includeSiblings = it },
-                        text = "Also name its other ${siblings.size} radio(s)/SSID(s) with a matching MAC",
+                        text = "Also name its other ${siblings.size} radio(s) / SSID(s) – same AP by MAC and survey signal",
                     )
                     Text(
-                        siblings.joinToString("\n") { "${it.bssid}  ${it.ssid.ifEmpty { "(hidden)" }}  ${Wifi.band(it.frequency)}" },
+                        siblings.sortedBy { it.bssid }.joinToString("\n") {
+                            "${it.bssid}  ${it.ssid.ifEmpty { "(hidden)" }}  ${if (it.frequency > 0) Wifi.band(it.frequency) else ""}"
+                        },
                         style = MaterialTheme.typography.labelSmall,
                         fontFamily = FontFamily.Monospace,
                         modifier = Modifier.padding(start = 40.dp),
