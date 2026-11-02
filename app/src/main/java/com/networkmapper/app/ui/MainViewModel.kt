@@ -315,8 +315,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         return true
     }
 
-    suspend fun createSite(name: String, notes: String = ""): Long =
-        repo.insertSite(Site(name = name.trim().ifEmpty { "New site" }, notes = notes.trim()))
+    /** New sites start where you are (GPS), or where the map is, so opening them goes straight there. */
+    suspend fun createSite(name: String, notes: String = ""): Long {
+        val loc = location.value?.takeIf { System.currentTimeMillis() - it.time < 10 * 60_000L }
+        val at = loc?.let { GeoPt(it.latitude, it.longitude) } ?: cameraCenter
+        val zoom = if (loc != null) 18.0 else cameraZoom
+        return repo.insertSite(
+            Site(
+                name = name.trim().ifEmpty { "New site" }, notes = notes.trim(),
+                homeLat = at?.lat, homeLon = at?.lon, homeZoom = at?.let { zoom },
+            ),
+        )
+    }
 
     /** Saves where the map is now as the open site's start view. */
     fun setSiteStartView(center: GeoPt, zoom: Double) = viewModelScope.launch {
@@ -382,6 +392,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         cameraCenter = center
         cameraInitialized = true
         focusRequest.value = center
+        // The site has no location yet: remember this view as its start view, so it opens here from now on.
+        if (site != null) repo.updateSite(site.copy(homeLat = center.lat, homeLon = center.lon, homeZoom = zoom))
     }
 
     // ---------- Data (always for the current site) ----------

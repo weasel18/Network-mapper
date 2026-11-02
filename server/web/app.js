@@ -977,9 +977,14 @@ function renderSiteSelect() {
 }
 /** Opens the site's start view if it has one, otherwise fits the map to its pins and routes. */
 function openSiteView() {
-  const h = S.sites.get(S.site)?.data.home;
-  if (h && Number.isFinite(h.lat) && Number.isFinite(h.lon)) map.setView([h.lat, h.lon], Number.isFinite(h.zoom) ? h.zoom : 18);
-  else fitSite();
+  const s = S.sites.get(S.site), h = s?.data.home;
+  if (h && Number.isFinite(h.lat) && Number.isFinite(h.lon)) { map.setView([h.lat, h.lon], Number.isFinite(h.zoom) ? h.zoom : 18); return; }
+  const pts = [...siteAssets().map((a) => [a.data.lat, a.data.lon]), ...sitePaths().flatMap((p) => decodePoints(p.data.points))];
+  if (!s || !pts.length) return;
+  // No location yet: frame its pins, and remember that as the site's start view so it opens here from now on.
+  const b = L.latLngBounds(pts), zoom = Math.min(map.getBoundsZoom(b.pad(0.15)), 19), c = b.getCenter();
+  map.setView(c, zoom);
+  push([change("sites", s.id, s.id, "", { ...s.data, home: { lat: c.lat, lon: c.lng, zoom } })]).catch(() => {});
 }
 function fitSite() {
   const pts = [...siteAssets().map((a) => [a.data.lat, a.data.lon]), ...sitePaths().flatMap((p) => decodePoints(p.data.points))];
@@ -990,7 +995,9 @@ async function siteAction(action) {
   if (action === "site-new") {
     const name = prompt("New site name"); if (!name) return;
     const id = uid();
-    await push([change("sites", id, id, "", { name: name.trim(), notes: "", createdAt: Date.now() })]);
+    // New sites start where the map is now, so opening them goes straight there.
+    const c = map.getCenter();
+    await push([change("sites", id, id, "", { name: name.trim(), notes: "", createdAt: Date.now(), home: { lat: c.lat, lon: c.lng, zoom: map.getZoom() } })]);
     S.site = id; localStorage.setItem("nm.site", id); render();
   } else if (action === "site-rename" && s) {
     const name = prompt("Site name", s.data.name); if (name === null) return;
