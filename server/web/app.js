@@ -452,7 +452,7 @@ function openDetails() {
 
 function photoSection(owner) {
   const photos = [...S.photos.values()].filter((p) => p.parent === owner || p.data.asset === owner || p.data.path === owner);
-  return `<h3>Photos (${photos.length})</h3><div class="photos" id="photos">${photos.map((p) => `<img data-photo="${esc(p.id)}" alt="${esc(p.data.caption || "photo")}" title="${esc(p.data.caption || "")}">`).join("")}</div>
+  return `<h3>Photos (${photos.length})</h3>${photos.length ? '<p class="muted small">Click a photo to view it full size or delete it.</p>' : ""}<div class="photos" id="photos">${photos.map((p) => `<img data-photo="${esc(p.id)}" alt="${esc(p.data.caption || "photo")}" title="${esc(p.data.caption || "")}">`).join("")}</div>
     <label>Add photos <input type="file" id="photo-input" accept="image/*,.heic,.heif" multiple></label>
     <p id="photo-status" class="muted small"></p>`;
 }
@@ -497,9 +497,30 @@ async function loadPhotoThumbs() {
         S.photoUrls.set(id, URL.createObjectURL(blob));
       }
       img.src = S.photoUrls.get(id);
-      img.onclick = () => { const lb = document.createElement("div"); lb.className = "lightbox"; lb.innerHTML = `<img src="${img.src}">`; lb.onclick = () => lb.remove(); document.body.appendChild(lb); };
+      img.onclick = () => openLightbox(id, img.src);
     } catch (e) { img.alt = "can't show photo"; img.title = e.message || ""; }
   }
+}
+function openLightbox(id, src) {
+  const p = S.photos.get(id);
+  const info = [p?.data.caption, p?.data.takenAt ? fmtTime(p.data.takenAt) : "", p?.by ? "by " + p.by : ""].filter(Boolean).join(" • ");
+  const lb = document.createElement("div");
+  lb.className = "lightbox";
+  lb.innerHTML = `<img src="${src}" alt="">
+    <div class="lb-bar"><span>${esc(info)}</span><button class="danger" data-lb="delete">Delete photo</button><button data-lb="close">Close</button></div>`;
+  lb.onclick = (e) => { if (e.target === lb || e.target.tagName === "IMG" || e.target.dataset.lb === "close") lb.remove(); };
+  lb.querySelector("[data-lb=delete]").onclick = async (e) => {
+    e.stopPropagation();
+    if (!p || !confirm("Delete this photo? It's removed from the server and from every phone on their next sync.")) return;
+    try {
+      await push([tomb("photos", id, p.site, p.parent || p.data.asset || p.data.path)]);
+      lb.remove();
+      URL.revokeObjectURL(S.photoUrls.get(id) || "");
+      S.photoUrls.delete(id);
+      openDetails();
+    } catch (err) { alert(err.message); }
+  };
+  document.body.appendChild(lb);
 }
 function wirePhotoUpload(ownerKind, owner, site, pos) {
   const input = $("#photo-input");
@@ -950,7 +971,11 @@ window.addEventListener("DOMContentLoaded", () => {
       else if (a.startsWith("site-")) await siteAction(a);
     } catch (e) { alert(e.message); }
   }));
-  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && S.mode) cancelMode(); });
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    const lb = document.querySelector(".lightbox");
+    if (lb) lb.remove(); else if (S.mode) cancelMode();
+  });
 
   const saved = localStorage.getItem("nm.key") || sessionStorage.getItem("nm.key");
   if (saved) {

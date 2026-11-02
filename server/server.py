@@ -112,6 +112,7 @@ class Store:
 
     def push(self, changes, device, device_name):
         applied = ignored = 0
+        removed_photos = []
         with self.lock, self.db:
             for ch in changes:
                 c = ch.get("c")
@@ -148,8 +149,16 @@ class Store:
                 if deleted and c == "sessions":
                     # Readings are owned by their survey session.
                     self.db.execute("DELETE FROM records WHERE c = 'readings' AND parent = ?", (rid,))
+                if deleted and c == "photos" and PHOTO_RE.match(rid):
+                    removed_photos.append(rid)
                 applied += 1
             seq = self.db.execute("SELECT v FROM meta WHERE k = 'seq'").fetchone()[0]
+        # A deleted photo's image file goes too (after the delete is committed).
+        for rid in removed_photos:
+            try:
+                os.remove(self.photo_path(rid))
+            except FileNotFoundError:
+                pass
         return {"applied": applied, "ignored": ignored, "seq": seq}
 
     def pull(self, since, sites, collections, exclude_device, limit):

@@ -116,6 +116,13 @@ class SyncServerTest(unittest.TestCase):
         self.assertEqual(self.call("GET", "/api/photos/missing-photo-1", raw=False)[0], 404)
         self.assertEqual(self.call("GET", "/api/photos/..%2Fsync.db")[0], 400)
 
+        # Deleting the photo record removes the image file too.
+        rec = {"c": "photos", "id": "0123456789abcdef", "site": "s-photo", "parent": "pin-1", "u": 1000, "d": False,
+               "data": {"asset": "pin-1", "fileName": "a.jpg"}}
+        self.call("POST", "/api/push", {"changes": [rec]})
+        self.call("POST", "/api/push", {"changes": [dict(rec, u=2000, d=True, data=None)]})
+        self.assertEqual(self.call("GET", "/api/photos/0123456789abcdef", raw=True)[0], 404)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -67,7 +67,9 @@ main { position: fixed; top: 48px; left: 0; right: 0; bottom: 0; }
 .legend { background: var(--card); color: var(--text); padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line); font-size: 12px; }
 .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin: 0 3px 0 6px; vertical-align: -1px; }
 .lightbox { position: fixed; inset: 0; background: rgba(0,0,0,.85); z-index: 2000; display: grid; place-items: center; }
-.lightbox img { max-width: 95vw; max-height: 90vh; }
+.lightbox img { max-width: 95vw; max-height: calc(100vh - 90px); }
+.lb-bar { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  justify-content: center; max-width: calc(100% - 32px); background: var(--card); color: var(--text); padding: 8px 12px; border-radius: 12px; }
 .panel label.row { display: flex; align-items: center; gap: 6px; }
 .panel label.row input, .panel input[type=checkbox], .panel input[type=file] { width: auto; }
 #btn-more { position: sticky; right: 0; box-shadow: -8px 0 8px var(--card); }
