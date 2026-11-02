@@ -23,7 +23,7 @@ enum class AssetType(
         listOf("Box ID", "Box size", "Lid type", "Depth", "Conduits in/out"),
     ),
     SPLICE(
-        "Splice enclosure", 0xFF8E24AA, "S",
+        "Splice enclosure", 0xFF8E24AA, "X",
         listOf("Enclosure ID", "Enclosure model", "Tray count", "Splice count", "Fiber count", "Cables in", "Splice diagram ref"),
     ),
     FDH(
@@ -45,7 +45,7 @@ enum class AssetType(
         bssidField = "MAC",
     ),
     SWITCH(
-        "Switch", 0xFF00897B, "W",
+        "Switch", 0xFF00897B, "S",
         listOf("Hostname", "Model", "IP address", "MAC", "Port count", "Uplink", "VLANs", "PoE budget"),
     ),
     ROUTER(

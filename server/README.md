@@ -93,7 +93,7 @@ the same access key (`SYNC_KEY`). Give the browser a name, such as "Office PC", 
 - **Pins:** **＋ Pin**, then click the map. Click a pin to edit its type, name, status, details, coverage pattern
   and notes, add photos (HEIC photos are converted to JPEG), or delete it. **Move pin** lets you drag it.
 - **Locations (closets / racks):** several devices in one place show as a single pin with a chip per device type
-  (e.g. `R` `W×2` `A`) and the location's name. Dropping or moving a pin within about 6 m of another one offers to
+  (e.g. `R` `S×2` `A`) and the location's name. Dropping or moving a pin within about 6 m of another one offers to
   add it to that location, or to create a new named location with it. Click the location to see its devices, add one,
   or move them all together. Open a device to take it out again. **☰ → Combine stacked pins** fixes pins already
   sitting on top of each other.

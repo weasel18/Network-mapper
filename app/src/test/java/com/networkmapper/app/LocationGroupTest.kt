@@ -121,10 +121,10 @@ class LocationGroupTest {
         fun pin(t: AssetType) = Asset(type = t, name = t.name, latitude = 0.0, longitude = 0.0)
         assertEquals(listOf("▣"), LocationChips.of(emptyList()).map { it.text })
         assertEquals(
-            listOf("R", "W×2", "A"),
+            listOf("R", "S×2", "A"),
             LocationChips.of(listOf(pin(AssetType.ACCESS_POINT), pin(AssetType.SWITCH), pin(AssetType.ROUTER), pin(AssetType.SWITCH))).map { it.text },
         )
         val many = listOf(AssetType.ROUTER, AssetType.SWITCH, AssetType.ACCESS_POINT, AssetType.FDH, AssetType.POLE, AssetType.POLE).map(::pin)
-        assertEquals(listOf("R", "W", "A", "+3"), LocationChips.of(many).map { it.text })
+        assertEquals(listOf("R", "S", "A", "+3"), LocationChips.of(many).map { it.text })
     }
 }

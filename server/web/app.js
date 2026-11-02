@@ -5,12 +5,12 @@
 
 const ASSET_TYPES = {
   FIBER_JUNCTION: { label: "Fiber junction / Handhole", color: "#1E88E5", glyph: "J", fields: ["Box ID", "Box size", "Lid type", "Depth", "Conduits in/out"] },
-  SPLICE: { label: "Splice enclosure", color: "#8E24AA", glyph: "S", fields: ["Enclosure ID", "Enclosure model", "Tray count", "Splice count", "Fiber count", "Cables in", "Splice diagram ref"] },
+  SPLICE: { label: "Splice enclosure", color: "#8E24AA", glyph: "X", fields: ["Enclosure ID", "Enclosure model", "Tray count", "Splice count", "Fiber count", "Cables in", "Splice diagram ref"] },
   FDH: { label: "Fiber cabinet / FDH / Patch panel", color: "#5E35B1", glyph: "F", fields: ["Cabinet ID", "Model", "Port count", "Splitter ratio", "Feeder cable"] },
   SLACK_LOOP: { label: "Slack loop / Coil", color: "#039BE5", glyph: "L", fields: ["Cable ID", "Slack length", "Fiber count"] },
   ACCESS_POINT: { label: "Wi-Fi access point", color: "#43A047", glyph: "A", fields: ["SSID", "MAC / BSSID", "IP address", "Model", "Channel", "Mount height", "Switch port"], bssidField: "MAC / BSSID" },
   WIRELESS_BRIDGE: { label: "Wireless bridge / PtP radio", color: "#FB8C00", glyph: "B", fields: ["Link name", "Model", "IP address", "MAC", "Frequency", "Channel width", "Azimuth (°)", "Tilt (°)", "Peer device", "Signal (dBm)"], bssidField: "MAC" },
-  SWITCH: { label: "Switch", color: "#00897B", glyph: "W", fields: ["Hostname", "Model", "IP address", "MAC", "Port count", "Uplink", "VLANs", "PoE budget"] },
+  SWITCH: { label: "Switch", color: "#00897B", glyph: "S", fields: ["Hostname", "Model", "IP address", "MAC", "Port count", "Uplink", "VLANs", "PoE budget"] },
   ROUTER: { label: "Router / Gateway / OLT", color: "#3949AB", glyph: "R", fields: ["Hostname", "Model", "IP address", "WAN / Uplink", "Serial", "Wi-Fi MAC / BSSID"], bssidField: "Wi-Fi MAC / BSSID" },
   POLE: { label: "Pole / Tower", color: "#6D4C41", glyph: "P", fields: ["Pole ID", "Owner", "Height", "Attachment height", "Make-ready notes"] },
   BUILDING_ENTRY: { label: "Building entry / Demarc", color: "#D81B60", glyph: "D", fields: ["Address", "Room / Location", "Contact", "Demarc type"] },

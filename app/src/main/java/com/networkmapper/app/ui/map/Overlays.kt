@@ -262,7 +262,7 @@ class MapOverlayController(private val context: Context, val mapView: MapView) {
 
     private val locationIcons = HashMap<String, Pair<Drawable, Float>>()
 
-    /** One rounded pin with a coloured chip per device type, e.g. [R] [W×2] [A], and the location name below. */
+    /** One rounded pin with a coloured chip per device type, e.g. [R] [S×2] [A], and the location name below. */
     private fun locationIcon(name: String, members: List<Asset>, selected: Boolean): Pair<Drawable, Float> {
         val chips = LocationChips.of(members)
         val label = if (name.length > 20) name.take(19) + "…" else name
@@ -664,7 +664,7 @@ class MyLocationOverlay(private val density: Float) : Overlay() {
     }
 }
 
-/** The chips on a location pin: one per device type, most important first, e.g. R, W×2, A. */
+/** The chips on a location pin: one per device type, most important first, e.g. R, S×2, A. */
 object LocationChips {
     data class Chip(val text: String, val color: Int)
 
