@@ -15,6 +15,8 @@ Environment:
   HOST        default 0.0.0.0 (use 127.0.0.1 behind a proxy on the host network)
   TLS_CERT / TLS_KEY   optional; serve HTTPS directly (for IP-only setups without a proxy)
   MAX_PHOTO_MB         default 25
+  UNIFI_API_KEY        optional; UniFi Site Manager (cloud) API key from unifi.ui.com -> Settings -> API.
+                       Lets the browser app show UniFi device status. The key stays on the server.
 
 API (all JSON unless noted, all require the key except /api/health):
   GET  /api/health                         -> {"ok": true, "version": ...}
@@ -25,6 +27,7 @@ API (all JSON unless noted, all require the key except /api/health):
   PUT  /api/photos/<uid>   (raw bytes)     -> {"ok": true}
   GET  /api/photos/<uid>                   -> raw bytes / 404
   GET  /api/devices                        -> {"devices": [{id, name, lastSeen}]}
+  GET  /api/unifi[?refresh=1]              -> {"configured": bool, "devices": [...], "fetchedAt": ms, "error"?: str}
   GET  /, /<file>                          -> the browser app (web/), no key needed to load the page
 
 A change is {"c": collection, "id": uid, "site": siteUid, "parent": parentUid, "u": updatedAtMs,
@@ -42,9 +45,11 @@ import threading
 import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlparse
+import urllib.error
+import urllib.request
+from urllib.parse import parse_qs, quote, urlparse
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 WEB_DIR = os.environ.get("WEB_DIR", os.path.join(os.path.dirname(os.path.abspath(__file__)), "web"))
 CONTENT_TYPES = {
     ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
@@ -294,6 +299,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, self.store.sites())
         if url.path == "/api/devices":
             return self._json(200, self.store.devices())
+        if url.path == "/api/unifi":
+            return self._json(200, self.unifi.devices(refresh=q.get("refresh", ["0"])[0] == "1"))
         if url.path == "/api/pull":
             try:
                 since = int(q.get("since", ["0"])[0])
@@ -353,10 +360,80 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, {"ok": True})
 
 
-def make_server(data_dir, key, port, host="0.0.0.0", cert=None, keyfile=None, max_photo_mb=25):
+def _mac(value):
+    hexes = re.sub(r"[^0-9a-fA-F]", "", str(value or "")).lower()
+    return ":".join(hexes[i:i + 2] for i in range(0, 12, 2)) if len(hexes) == 12 else ""
+
+
+class UnifiCloud:
+    """Device list from the UniFi Site Manager API (api.ui.com), cached briefly. The API key never leaves the server."""
+
+    def __init__(self, api_key, base_url="https://api.ui.com", ttl=60):
+        self.api_key = (api_key or "").strip()
+        self.base_url = base_url.rstrip("/")
+        self.ttl = ttl
+        self.lock = threading.Lock()
+        self.cached = None
+        self.cached_at = 0.0
+
+    def _get(self, path):
+        req = urllib.request.Request(self.base_url + path, headers={"X-API-KEY": self.api_key, "Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return json.loads(r.read().decode("utf-8"))
+
+    @staticmethod
+    def _device(d, host):
+        return {
+            "mac": _mac(d.get("mac")),
+            "name": d.get("name") or "",
+            "model": d.get("model") or d.get("shortname") or "",
+            "ip": d.get("ip") or "",
+            "status": (d.get("status") or "").lower(),
+            "firmware": d.get("version") or "",
+            "updateAvailable": d.get("updateAvailable") or "",
+            "productLine": d.get("productLine") or "",
+            "isConsole": bool(d.get("isConsole")),
+            "startupTime": d.get("startupTime") or "",
+            "console": host.get("hostName") or "",
+        }
+
+    def devices(self, refresh=False):
+        if not self.api_key:
+            return {"configured": False, "devices": []}
+        with self.lock:
+            if self.cached and not refresh and time.time() - self.cached_at < self.ttl:
+                return self.cached
+            try:
+                out, token = [], None
+                for _ in range(50):  # pages
+                    body = self._get("/v1/devices" + (f"?nextToken={quote(token)}" if token else ""))
+                    for host in body.get("data") or []:
+                        for d in host.get("devices") or []:
+                            out.append(self._device(d, host))
+                    token = body.get("nextToken")
+                    if not token:
+                        break
+                self.cached = {"configured": True, "devices": out, "fetchedAt": int(time.time() * 1000)}
+                self.cached_at = time.time()
+                return self.cached
+            except urllib.error.HTTPError as e:
+                msg = "The UniFi cloud refused the API key (check UNIFI_API_KEY)" if e.code in (401, 403) else f"UniFi cloud error {e.code}"
+            except (urllib.error.URLError, TimeoutError, OSError) as e:
+                msg = f"Can't reach the UniFi cloud ({getattr(e, 'reason', e)})"
+            except ValueError:
+                msg = "Unexpected answer from the UniFi cloud"
+            stale = dict(self.cached or {"configured": True, "devices": []})
+            stale["error"] = msg
+            return stale
+
+
+def make_server(data_dir, key, port, host="0.0.0.0", cert=None, keyfile=None, max_photo_mb=25, unifi=None):
     if not key or len(key) < 16:
         raise SystemExit("SYNC_KEY must be set to a random string of at least 16 characters")
-    handler = type("BoundHandler", (Handler,), {"store": Store(data_dir), "key": key, "max_photo": max_photo_mb * 1024 * 1024})
+    handler = type("BoundHandler", (Handler,), {
+        "store": Store(data_dir), "key": key, "max_photo": max_photo_mb * 1024 * 1024,
+        "unifi": unifi or UnifiCloud(""),
+    })
     httpd = ThreadingHTTPServer((host, port), handler)
     if cert and keyfile:
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
@@ -374,6 +451,7 @@ def main():
         cert=os.environ.get("TLS_CERT"),
         keyfile=os.environ.get("TLS_KEY"),
         max_photo_mb=int(os.environ.get("MAX_PHOTO_MB", "25")),
+        unifi=UnifiCloud(os.environ.get("UNIFI_API_KEY", ""), os.environ.get("UNIFI_API_URL", "https://api.ui.com")),
     )
     scheme = "https" if os.environ.get("TLS_CERT") else "http"
     print(f"Network Mapper sync server {VERSION} on {scheme}://{httpd.server_address[0]}:{httpd.server_port}", flush=True)

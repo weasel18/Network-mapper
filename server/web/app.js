@@ -189,10 +189,10 @@ function locationChips(members) {
   const rest = types.slice(3).reduce((s, t) => s + byType.get(t), 0);
   return [...chips.slice(0, 3), [`+${rest}`, "#607D8B"]];
 }
-function locationIcon(loc, members, selected) {
+function locationIcon(loc, members, selected, offline = false) {
   const chips = locationChips(members).map(([html, c]) => `<span style="background:${c}">${html}</span>`).join("");
   return L.divIcon({ className: "", iconSize: [0, 0], iconAnchor: [0, 0],
-    html: `<div class="loc-pin${selected ? " selected" : ""}">${chips}</div><div class="loc-label">${esc(loc.data.name)}</div>` });
+    html: `<div class="loc-pin${selected ? " selected" : ""}${offline ? " offline" : ""}"${offline ? ' title="A device here is offline in UniFi"' : ""}>${chips}</div><div class="loc-label">${esc(loc.data.name)}</div>` });
 }
 /** A location, or a lone device, near pt that a new / moved device could share. Existing locations win. */
 function groupOfferFor(pt, moving) {
@@ -232,9 +232,68 @@ function offerPanel(offer, what, separateLabel, onJoin, onSeparate) {
   $("#o-sep").onclick = () => onSeparate().catch((e) => alert(e.message));
 }
 
-function pinIcon(type, selected) {
+function pinIcon(type, selected, offline = false) {
   const t = ASSET_TYPES[type] || ASSET_TYPES.OTHER;
-  return L.divIcon({ className: "", iconSize: [28, 28], iconAnchor: [14, 14], html: `<div class="pin${selected ? " selected" : ""}" style="background:${t.color}">${glyphHtml(type)}</div>` });
+  return L.divIcon({ className: "", iconSize: [28, 28], iconAnchor: [14, 14],
+    html: `<div class="pin${selected ? " selected" : ""}${offline ? " offline" : ""}" style="background:${t.color}"${offline ? ' title="Offline in UniFi"' : ""}>${glyphHtml(type)}</div>` });
+}
+
+// ---------------------------------------------------------------- UniFi (cloud API, through the server)
+
+const UNIFI_TYPES = ["ACCESS_POINT", "WIRELESS_BRIDGE", "SWITCH", "ROUTER"];
+async function loadUnifi(refresh = false) {
+  try { S.unifi = await api("GET", "/api/unifi" + (refresh ? "?refresh=1" : "")); } catch (e) { S.unifi = { configured: true, devices: [], error: e.message }; }
+  return S.unifi;
+}
+/** The UniFi device for a pin: by MAC (its own, or an AP radio BSSID next to it), else by exact name. */
+function unifiFor(a) {
+  const devs = S.unifi?.devices || [];
+  if (!devs.length || isLoc(a)) return null;
+  const attrs = a.data.attributes || {};
+  const macs = Object.entries(attrs).filter(([k]) => /mac|bssid/i.test(k)).flatMap(([, v]) => parseMacs(v));
+  for (const m of macs) { const d = devs.find((x) => x.mac === m); if (d) return d; }
+  // AP BSSIDs differ from the device MAC in the first (and sometimes fourth) byte.
+  const same = (x, y) => [1, 2, 4, 5].every((i) => x.split(":")[i] === y.split(":")[i]);
+  for (const m of macs) { const d = devs.find((x) => x.mac && same(x.mac, m)); if (d) return d; }
+  if (!macs.length) { const n = a.data.name.trim().toLowerCase(); return devs.find((x) => x.name && x.name.trim().toLowerCase() === n) || null; }
+  return null;
+}
+const isOffline = (a) => unifiFor(a)?.status === "offline";
+function uptime(iso) {
+  const t = Date.parse(iso); if (!Number.isFinite(t)) return "";
+  const m = Math.max(0, Math.round((Date.now() - t) / 60000)), d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60);
+  return d ? `${d} d ${h} h` : h ? `${h} h ${m % 60} min` : `${m} min`;
+}
+function unifiSection(a) {
+  if (!S.unifi?.configured || !(UNIFI_TYPES.includes(a.data.type) || unifiFor(a))) return "";
+  const dev = unifiFor(a), u = S.unifi;
+  const rows = dev ? [
+    ["Status", `<span class="dot ${dev.status === "online" ? "on" : "off"}"></span>${esc(dev.status || "unknown")}`],
+    ["UniFi name", esc(dev.name)], ["Model", esc(dev.model)], ["IP", esc(dev.ip)], ["MAC", `<code>${esc(dev.mac)}</code>`],
+    ["Firmware", esc(dev.firmware) + (dev.updateAvailable ? ` <span class="chip">update ${esc(dev.updateAvailable)}</span>` : "")],
+    ["Up", dev.status === "online" ? esc(uptime(dev.startupTime)) : ""], ["Console", esc(dev.console)],
+  ].filter(([, v]) => v) : [];
+  const options = [...u.devices].filter((d) => !d.isConsole || a.data.type === "ROUTER").sort((x, y) => x.name.localeCompare(y.name))
+    .map((d) => `<option value="${esc(d.mac)}">${esc(d.name || d.mac)} – ${esc(d.model)}${d.ip ? " – " + esc(d.ip) : ""}</option>`).join("");
+  return `<h3>UniFi <button type="button" id="u-refresh" class="small">Refresh</button></h3>
+    ${u.error ? `<p class="error small">${esc(u.error)}</p>` : ""}
+    ${dev ? `<div class="unifi-grid">${rows.map(([k, v]) => `<span class="muted">${k}</span><span>${v}</span>`).join("")}</div>
+      <p class="muted small">From the UniFi cloud, ${u.fetchedAt ? "updated " + new Date(u.fetchedAt).toLocaleTimeString() : ""}.</p>`
+      : `<p class="muted small">Not matched to a UniFi device. Pick one to fill in this pin's details (then Save):</p>`}
+    ${options ? `<div class="grid2"><select id="u-pick"><option value="">UniFi device…</option>${options}</select><button type="button" id="u-fill">Fill details</button></div>` : ""}`;
+}
+function wireUnifi(a) {
+  if ($("#u-refresh")) $("#u-refresh").onclick = async () => { $("#u-refresh").disabled = true; await loadUnifi(true); render(); openDetails(); };
+  if (!$("#u-fill")) return;
+  $("#u-fill").onclick = () => {
+    const d = (S.unifi.devices || []).find((x) => x.mac === $("#u-pick").value);
+    if (!d) return;
+    const t = typeOf(a);
+    const set = (key, v) => { const i = panel().querySelector(`[data-attr="${CSS.escape(key)}"]`); if (i && v && (!i.value || key !== t.bssidField)) i.value = v; };
+    if (d.name) $("#f-name").value = d.name;
+    set("Hostname", d.name); set("Model", d.model); set("IP address", d.ip); set("MAC", d.mac); set(t.bssidField || "MAC", d.mac);
+    $("#f-name").dispatchEvent(new Event("input", { bubbles: true })); // marks the form as edited
+  };
 }
 
 function readPattern(attrs) {
@@ -295,7 +354,8 @@ function render() {
         continue;
       }
       const members = isLoc(a) ? membersOf(a) : [];
-      const icon = isLoc(a) ? locationIcon(a, members, sel || members.some((x) => S.selected && x.id === S.selected.id)) : pinIcon(a.data.type, sel);
+      const icon = isLoc(a) ? locationIcon(a, members, sel || members.some((x) => S.selected && x.id === S.selected.id), members.some(isOffline))
+        : pinIcon(a.data.type, sel, isOffline(a));
       const m = L.marker(pos, { icon, draggable: S.mode === "move-pin" && sel, title: a.data.name });
       m.on("click", (e) => { L.DomEvent.stopPropagation(e); onPinClick(a); });
       m.on("dragend", () => { const ll = m.getLatLng(); S.movedTo = [ll.lat, ll.lng]; showHint("Pin moved – Save to keep it", [["Save position", savePinMove], ["Cancel", cancelMode]]); });
@@ -649,12 +709,14 @@ function openAsset(a) {
         <label>Azimuth (°) <input id="p-az" type="number" min="0" max="359" value="${pat ? pat.az : 0}"></label>
         <label>Beamwidth (°) <input id="p-beam" type="number" min="1" max="360" value="${pat ? pat.beam : 120}"></label>
       </div>` : ""}
+    ${unifiSection(a)}
     <h3>Details</h3>
     ${attributesEditor(t.fields, attrs, Object.values(PATTERN_KEYS))}
     <label>Notes <textarea id="f-notes">${esc(d.notes || "")}</textarea></label>
     ${photoSection(a.id)}
     <div class="actions">${saveButton("f-save", a)}<button class="danger" id="f-delete">Delete</button></div>`);
   wireAttributeAdder();
+  wireUnifi(a);
   loadPhotoThumbs();
   wirePhotoUpload("assets", a.id, a.site, [d.lat, d.lon]);
   if ($("#f-move")) $("#f-move").onclick = () => { S.mode = "move-pin"; render(); showHint("Drag the pin to its new position", [["Cancel", cancelMode]]); };
@@ -969,6 +1031,11 @@ async function start() {
   await pullAll();
   render();
   openSiteView();
+  // UniFi device status (only when the server has a UniFi cloud API key).
+  if ((await loadUnifi()).configured) {
+    render();
+    setInterval(async () => { await loadUnifi(); render(); if (S.selected && !S.mode && !panel().contains(document.activeElement)) openDetails(); }, 60000);
+  }
   setInterval(async () => {
     try { if (await pullAll()) { render(); if (S.selected && !S.mode && !panel().contains(document.activeElement)) openDetails(); } }
     catch (e) { $("#status").textContent = e.message; }

@@ -110,6 +110,25 @@ the same access key (`SYNC_KEY`). Give the browser a name, such as "Office PC", 
 
 Surveys (walking Wi-Fi scans) and GPS pins still come from the phones; browsers can't scan Wi-Fi.
 
+### UniFi in the browser (optional)
+
+The browser version can show live UniFi device status using Ubiquiti's **cloud** API (`api.ui.com`), so neither the
+server nor your laptop needs a VPN to the console. The console must be linked to your UI.com account.
+
+1. Sign in at [unifi.ui.com](https://unifi.ui.com), open **API** and create an API key (read access is enough).
+2. On the VPS, add it to `server/.env`: `UNIFI_API_KEY=...` and restart:
+   `sudo docker compose -f docker-compose.host.yml up -d`.
+
+Then, on switch, gateway, AP and bridge pins:
+- a **UniFi** section shows online/offline, model, IP, MAC, firmware (and available updates), uptime and the console;
+- pins whose device is offline get a red ring on the map (a location pin turns red if any device in it is offline);
+- **Fill details** copies name, model, IP and MAC from a UniFi device you pick (then press Save).
+
+Pins are matched to UniFi devices by the MAC in their details (an AP's radio BSSID works too), or by exactly the
+same name. The device list refreshes every minute; **Refresh** fetches it immediately. The key stays on the server.
+The cloud API gives device-level status only; per-port and per-client details still come from the phone app's
+direct connection to the console.
+
 ## How sync works
 
 - Every record has a permanent ID shared by all phones. Phones **push** what changed and **pull**

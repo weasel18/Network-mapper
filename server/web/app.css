@@ -126,3 +126,11 @@ main { position: fixed; top: 48px; left: 0; right: 0; bottom: 0; }
 /* Save buttons: grey while saving, green once saved (until something is edited again) */
 button:disabled { opacity: .55; cursor: default; }
 button.primary.saved { background: #2e7d32; border-color: #2e7d32; color: #fff; }
+
+/* UniFi status */
+.pin.offline { box-shadow: 0 0 0 3px #e53935, 0 1px 4px rgba(0,0,0,.4); }
+.loc-pin.offline { border-color: #e53935; box-shadow: 0 0 0 2px #e53935; }
+.unifi-grid { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; font-size: 13px; }
+.dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; }
+.dot.on { background: #2e7d32; } .dot.off { background: #e53935; }
+h3 button.small { font-size: 12px; padding: 2px 8px; margin-left: 8px; font-weight: normal; }

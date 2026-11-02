@@ -124,5 +124,58 @@ class SyncServerTest(unittest.TestCase):
         self.assertEqual(self.call("GET", "/api/photos/0123456789abcdef", raw=True)[0], 404)
 
 
+class UnifiCloudTest(unittest.TestCase):
+    """The /api/unifi proxy, against a fake api.ui.com."""
+
+    def test_devices_paging_cache_and_errors(self):
+        import http.server
+        calls = []
+
+        class Fake(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_GET(self):
+                calls.append((self.path, self.headers.get("X-API-KEY")))
+                if self.headers.get("X-API-KEY") != "good-key":
+                    self.send_response(401); self.end_headers(); return
+                if "nextToken=p2" in self.path:
+                    body = {"data": [{"hostName": "UDM Pro", "devices": [
+                        {"mac": "7483C2AABB02", "name": "Lobby AP", "model": "U6 Pro", "ip": "10.0.0.21", "status": "offline",
+                         "version": "6.6.77", "productLine": "network"}]}]}
+                else:
+                    body = {"data": [{"hostName": "UDM Pro", "devices": [
+                        {"mac": "74:83:C2:AA:BB:01", "name": "Core SW", "shortname": "USW-24-PoE", "ip": "10.0.0.2", "status": "online",
+                         "version": "7.1.66", "updateAvailable": "7.2.1", "isConsole": False}]}], "nextToken": "p2"}
+                raw = json.dumps(body).encode()
+                self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(raw)
+
+        fake = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Fake)
+        threading.Thread(target=fake.serve_forever, daemon=True).start()
+        base = f"http://127.0.0.1:{fake.server_port}"
+        try:
+            self.assertEqual(server.UnifiCloud("").devices(), {"configured": False, "devices": []})
+
+            cloud = server.UnifiCloud("good-key", base)
+            r = cloud.devices()
+            self.assertTrue(r["configured"])
+            self.assertEqual([d["mac"] for d in r["devices"]], ["74:83:c2:aa:bb:01", "74:83:c2:aa:bb:02"])
+            sw = r["devices"][0]
+            self.assertEqual((sw["name"], sw["model"], sw["status"], sw["updateAvailable"], sw["console"]),
+                             ("Core SW", "USW-24-PoE", "online", "7.2.1", "UDM Pro"))
+            self.assertEqual(r["devices"][1]["status"], "offline")
+            n = len(calls)
+            cloud.devices()  # cached
+            self.assertEqual(len(calls), n)
+            cloud.devices(refresh=True)
+            self.assertEqual(len(calls), n + 2)
+
+            bad = server.UnifiCloud("wrong-key", base).devices()
+            self.assertIn("refused the API key", bad["error"])
+            self.assertEqual(bad["devices"], [])
+        finally:
+            fake.shutdown()
+
+
 if __name__ == "__main__":
     unittest.main()
