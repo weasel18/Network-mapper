@@ -369,7 +369,8 @@ class UnifiCloud:
     """Device list from the UniFi Site Manager API (api.ui.com), cached briefly. The API key never leaves the server."""
 
     def __init__(self, api_key, base_url="https://api.ui.com", ttl=60):
-        self.api_key = (api_key or "").strip()
+        # Tolerate KEY="..." / '...' and stray spaces or Windows line endings in .env.
+        self.api_key = (api_key or "").strip().strip('"').strip("'").strip()
         self.base_url = base_url.rstrip("/")
         self.ttl = ttl
         self.lock = threading.Lock()
@@ -417,7 +418,18 @@ class UnifiCloud:
                 self.cached_at = time.time()
                 return self.cached
             except urllib.error.HTTPError as e:
-                msg = "The UniFi cloud refused the API key (check UNIFI_API_KEY)" if e.code in (401, 403) else f"UniFi cloud error {e.code}"
+                detail = ""
+                try:
+                    body = json.loads(e.read().decode("utf-8", "replace") or "{}")
+                    detail = str(body.get("message") or body.get("error") or body.get("code") or "")[:200]
+                except (ValueError, OSError, AttributeError):
+                    pass
+                said = f" – api.ui.com said: HTTP {e.code}" + (f" “{detail}”" if detail else "")
+                if e.code in (401, 403):
+                    msg = ("The UniFi cloud refused the API key (check UNIFI_API_KEY; it must be a Site Manager key from "
+                           f"unifi.ui.com → API, {len(self.api_key)} characters received){said}")
+                else:
+                    msg = f"UniFi cloud error{said}"
             except (urllib.error.URLError, TimeoutError, OSError) as e:
                 msg = f"Can't reach the UniFi cloud ({getattr(e, 'reason', e)})"
             except ValueError:

@@ -170,8 +170,14 @@ class UnifiCloudTest(unittest.TestCase):
             cloud.devices(refresh=True)
             self.assertEqual(len(calls), n + 2)
 
+            quoted = server.UnifiCloud(' "good-key"\r', base).devices()  # KEY="..." with a Windows line ending
+            self.assertNotIn("error", quoted)
+            self.assertEqual(len(quoted["devices"]), 2)
+
             bad = server.UnifiCloud("wrong-key", base).devices()
             self.assertIn("refused the API key", bad["error"])
+            self.assertIn("HTTP 401", bad["error"])
+            self.assertIn("9 characters", bad["error"])
             self.assertEqual(bad["devices"], [])
         finally:
             fake.shutdown()
