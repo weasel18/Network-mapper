@@ -365,31 +365,80 @@ function openDetails() {
 function photoSection(owner) {
   const photos = [...S.photos.values()].filter((p) => p.parent === owner || p.data.asset === owner || p.data.path === owner);
   return `<h3>Photos (${photos.length})</h3><div class="photos" id="photos">${photos.map((p) => `<img data-photo="${esc(p.id)}" alt="${esc(p.data.caption || "photo")}" title="${esc(p.data.caption || "")}">`).join("")}</div>
-    <label>Add photos <input type="file" id="photo-input" accept="image/*" multiple></label>`;
+    <label>Add photos <input type="file" id="photo-input" accept="image/*,.heic,.heif" multiple></label>
+    <p id="photo-status" class="muted small"></p>`;
 }
+
+// HEIC / HEIF (iPhone and many Android cameras): only Safari can display it, so the browser converts it to JPEG.
+const HEIF_BRANDS = /^(heic|heix|hevc|hevx|heim|heis|hevm|hevs|mif1|msf1)$/;
+async function isHeif(blob) {
+  const b = new Uint8Array(await blob.slice(0, 12).arrayBuffer());
+  const s = String.fromCharCode(...b);
+  return s.slice(4, 8) === "ftyp" && HEIF_BRANDS.test(s.slice(8, 12));
+}
+let heicLib = null;
+function loadHeicLib() {
+  heicLib = heicLib || new Promise((ok, fail) => {
+    const s = document.createElement("script");
+    s.src = "vendor/heic2any/heic2any.min.js";
+    s.onload = () => ok(window.heic2any);
+    s.onerror = () => { heicLib = null; fail(new Error("Couldn't load the HEIC converter")); };
+    document.head.appendChild(s);
+  });
+  return heicLib;
+}
+async function heifToJpeg(blob) {
+  try { // Safari decodes HEIC itself; re-encode through a canvas.
+    const bmp = await createImageBitmap(blob);
+    const c = document.createElement("canvas");
+    c.width = bmp.width; c.height = bmp.height;
+    c.getContext("2d").drawImage(bmp, 0, 0); bmp.close();
+    const out = await new Promise((ok) => c.toBlob(ok, "image/jpeg", 0.88));
+    if (out) return out;
+  } catch (e) { /* not supported natively – fall through */ }
+  const out = await (await loadHeicLib())({ blob, toType: "image/jpeg", quality: 0.88 });
+  return Array.isArray(out) ? out[0] : out;
+}
+
 async function loadPhotoThumbs() {
   for (const img of panel().querySelectorAll("img[data-photo]")) {
     const id = img.dataset.photo;
     try {
-      if (!S.photoUrls.has(id)) S.photoUrls.set(id, URL.createObjectURL(await api("GET", `/api/photos/${encodeURIComponent(id)}`, undefined, "blob")));
+      if (!S.photoUrls.has(id)) {
+        let blob = await api("GET", `/api/photos/${encodeURIComponent(id)}`, undefined, "blob");
+        if (await isHeif(blob)) blob = await heifToJpeg(blob); // older uploads saved as HEIC
+        S.photoUrls.set(id, URL.createObjectURL(blob));
+      }
       img.src = S.photoUrls.get(id);
       img.onclick = () => { const lb = document.createElement("div"); lb.className = "lightbox"; lb.innerHTML = `<img src="${img.src}">`; lb.onclick = () => lb.remove(); document.body.appendChild(lb); };
-    } catch (e) { img.alt = "missing"; }
+    } catch (e) { img.alt = "can't show photo"; img.title = e.message || ""; }
   }
 }
 function wirePhotoUpload(ownerKind, owner, site, pos) {
   const input = $("#photo-input");
   if (!input) return;
   input.onchange = async () => {
-    for (const file of input.files) {
-      const id = uid();
-      const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
-      await api("PUT", `/api/photos/${id}`, await file.arrayBuffer(), true);
-      await push([change("photos", id, site, owner, {
-        asset: ownerKind === "assets" ? owner : "", path: ownerKind === "paths" ? owner : "",
-        fileName: `IMG_web_${Date.now()}_${Math.floor(Math.random() * 9000 + 1000)}.${ext}`,
-        lat: pos ? pos[0] : null, lon: pos ? pos[1] : null, acc: null, caption: file.name, takenAt: file.lastModified || Date.now(),
-      })]);
+    const status = $("#photo-status");
+    const files = [...input.files];
+    input.disabled = true;
+    try {
+      for (const [i, file] of files.entries()) {
+        let blob = file, ext = (file.name.split(".").pop() || "jpg").toLowerCase();
+        if (await isHeif(file)) {
+          status.textContent = `Converting ${file.name} to JPEG… (${i + 1}/${files.length})`;
+          blob = await heifToJpeg(file); ext = "jpg";
+        }
+        status.textContent = `Uploading ${file.name}… (${i + 1}/${files.length})`;
+        const id = uid();
+        await api("PUT", `/api/photos/${id}`, await blob.arrayBuffer(), true);
+        await push([change("photos", id, site, owner, {
+          asset: ownerKind === "assets" ? owner : "", path: ownerKind === "paths" ? owner : "",
+          fileName: `IMG_web_${Date.now()}_${Math.floor(Math.random() * 9000 + 1000)}.${ext}`,
+          lat: pos ? pos[0] : null, lon: pos ? pos[1] : null, acc: null, caption: file.name, takenAt: file.lastModified || Date.now(),
+        })]);
+      }
+    } catch (e) {
+      alert(`Photo upload failed: ${e.message || e}`);
     }
     openDetails();
   };
