@@ -31,6 +31,9 @@ const STATUSES = ["Active", "Planned", "Under construction", "Inactive", "Damage
 const PATH_COLORS = [0xFF1565C0, 0xFF6A1B9A, 0xFFEF6C00, 0xFF2E7D32, 0xFFC62828, 0xFF00838F, 0xFFF9A825, 0xFF4E342E, 0xFF212121, 0xFFAD1457];
 const PATTERN_KEYS = { pattern: "Coverage pattern", azimuth: "Azimuth (°)", beam: "Beamwidth (°)", range: "Coverage range (m)" };
 const COLLECTIONS = "sites,assets,paths,photos,sessions,ap_names,settings";
+const WIFI_SVG = (px) => `<svg class="wifi-ico" viewBox="0 0 24 24" width="${px}" height="${px}" fill="none" stroke="#fff" stroke-width="2.8" stroke-linecap="round" role="img" aria-label="Wi-Fi AP"><path d="M2.5 9.2a13.5 13.5 0 0 1 19 0"/><path d="M6 12.8a8.5 8.5 0 0 1 12 0"/><path d="M9.5 16.3a3.6 3.6 0 0 1 5 0"/><circle cx="12" cy="19.6" r="1.7" fill="#fff" stroke="none"/></svg>`;
+/** What's drawn inside a pin: a Wi-Fi icon for access points, otherwise the type's letter. */
+const glyphHtml = (type, px = 18) => (type === "ACCESS_POINT" ? WIFI_SVG(px) : esc((ASSET_TYPES[type] || ASSET_TYPES.OTHER).glyph));
 
 // ---------------------------------------------------------------- helpers
 
@@ -146,15 +149,7 @@ function initMap() {
   try { if (baseLayers[localStorage.getItem("nm.base")]) base = localStorage.getItem("nm.base"); } catch (e) { /* storage blocked */ }
   baseLayers[base].addTo(map);
   L.control.layers(baseLayers, null, { position: "bottomleft" }).addTo(map);
-  // Phones pick the map style in the Layers dropdown; desktop uses the control. Both stay in step.
-  $("#base-select").value = base;
-  map.on("baselayerchange", (e) => { $("#base-select").value = e.name; try { localStorage.setItem("nm.base", e.name); } catch (err) { /* ignore */ } });
-  $("#base-select").onchange = () => {
-    const name = $("#base-select").value;
-    Object.values(baseLayers).forEach((l) => map.removeLayer(l));
-    baseLayers[name].addTo(map);
-    try { localStorage.setItem("nm.base", name); } catch (err) { /* ignore */ }
-  };
+  map.on("baselayerchange", (e) => { try { localStorage.setItem("nm.base", e.name); } catch (err) { /* ignore */ } });
   L.control.scale({ position: "bottomright" }).addTo(map);
   layers.heat = L.layerGroup().addTo(map);
   layers.patterns = L.layerGroup().addTo(map);
@@ -184,18 +179,18 @@ function locationOf(a) {
 const membersOf = (loc) => [...S.assets.values()].filter((m) => m.data.group === loc.id && !isLoc(m) && m.site === loc.site)
   .sort((x, y) => CHIP_PRIORITY.indexOf(x.data.type) - CHIP_PRIORITY.indexOf(y.data.type) || x.data.name.localeCompare(y.data.name));
 function locationChips(members) {
-  if (!members.length) return [[ASSET_TYPES.LOCATION.glyph, ASSET_TYPES.LOCATION.color]];
+  if (!members.length) return [[esc(ASSET_TYPES.LOCATION.glyph), ASSET_TYPES.LOCATION.color]];
   const byType = new Map();
   members.forEach((m) => byType.set(m.data.type, (byType.get(m.data.type) || 0) + 1));
   const rank = (t) => (CHIP_PRIORITY.includes(t) ? CHIP_PRIORITY.indexOf(t) : 99);
   const types = [...byType.keys()].sort((a, b) => rank(a) - rank(b));
-  const chips = types.map((t) => { const x = ASSET_TYPES[t] || ASSET_TYPES.OTHER, n = byType.get(t); return [n > 1 ? `${x.glyph}×${n}` : x.glyph, x.color]; });
+  const chips = types.map((t) => { const x = ASSET_TYPES[t] || ASSET_TYPES.OTHER, n = byType.get(t); return [glyphHtml(t, 15) + (n > 1 ? `×${n}` : ""), x.color]; });
   if (chips.length <= 4) return chips;
   const rest = types.slice(3).reduce((s, t) => s + byType.get(t), 0);
   return [...chips.slice(0, 3), [`+${rest}`, "#607D8B"]];
 }
 function locationIcon(loc, members, selected) {
-  const chips = locationChips(members).map(([t, c]) => `<span style="background:${c}">${esc(t)}</span>`).join("");
+  const chips = locationChips(members).map(([html, c]) => `<span style="background:${c}">${html}</span>`).join("");
   return L.divIcon({ className: "", iconSize: [0, 0], iconAnchor: [0, 0],
     html: `<div class="loc-pin${selected ? " selected" : ""}">${chips}</div><div class="loc-label">${esc(loc.data.name)}</div>` });
 }
@@ -239,7 +234,7 @@ function offerPanel(offer, what, separateLabel, onJoin, onSeparate) {
 
 function pinIcon(type, selected) {
   const t = ASSET_TYPES[type] || ASSET_TYPES.OTHER;
-  return L.divIcon({ className: "", iconSize: [28, 28], iconAnchor: [14, 14], html: `<div class="pin${selected ? " selected" : ""}" style="background:${t.color}">${esc(t.glyph)}</div>` });
+  return L.divIcon({ className: "", iconSize: [28, 28], iconAnchor: [14, 14], html: `<div class="pin${selected ? " selected" : ""}" style="background:${t.color}">${glyphHtml(type)}</div>` });
 }
 
 function readPattern(attrs) {
@@ -440,8 +435,32 @@ async function savePinMove() {
 // ---------------------------------------------------------------- side panel
 
 const panel = () => $("#panel");
+// ---- Save buttons: grey "Saving…", then green "Saved ✓" until something in the panel is edited.
+const isSaved = (rec) => !!S.saved && S.saved.id === rec.id && S.saved.u === rec.u;
+const saveButton = (id, rec) => `<button class="primary${isSaved(rec) ? " saved" : ""}" id="${id}">${isSaved(rec) ? "Saved ✓" : "Save"}</button>`;
+/** doSave() pushes the change and returns its timestamp. */
+function wireSave(id, rec, doSave) {
+  const btn = $("#" + id);
+  const edited = (e) => {
+    if (e.target.id === "photo-input" || !btn.classList.contains("saved")) return;
+    btn.classList.remove("saved"); btn.textContent = "Save"; S.saved = null;
+  };
+  panel().oninput = edited;
+  panel().onchange = edited;
+  btn.onclick = async () => {
+    btn.disabled = true; btn.textContent = "Saving…";
+    try {
+      const u = await doSave();
+      S.saved = { id: rec.id, u };
+      openDetails();
+    } catch (e) {
+      btn.disabled = false; btn.textContent = "Save";
+      alert(e.message);
+    }
+  };
+}
 function closePanel() { panel().classList.add("hidden"); panel().innerHTML = ""; document.body.classList.remove("panel-open"); }
-function openPanel(html) { panel().innerHTML = html; panel().classList.remove("hidden"); document.body.classList.add("panel-open"); closeLayers(); panel().querySelectorAll("[data-close]").forEach((b) => (b.onclick = () => { S.selected = null; if (S.mode) cancelMode(); closePanel(); render(); })); }
+function openPanel(html) { panel().oninput = panel().onchange = null; panel().innerHTML = html; panel().classList.remove("hidden"); document.body.classList.add("panel-open"); closeLayers(); panel().querySelectorAll("[data-close]").forEach((b) => (b.onclick = () => { S.selected = null; if (S.mode) cancelMode(); closePanel(); render(); })); }
 
 function optionList(items, current) { return items.map(([v, l]) => `<option value="${esc(v)}"${v === current ? " selected" : ""}>${esc(l)}</option>`).join(""); }
 
@@ -609,11 +628,11 @@ function openAsset(a) {
   const macs = t.bssidField ? parseMacs(attrs[t.bssidField]) : [];
   const inLoc = isLoc(a) ? null : locationOf(a);
   const members = isLoc(a) ? membersOf(a) : [];
-  openPanel(`<h2><span class="pin" style="background:${t.color}">${esc(t.glyph)}</span> ${esc(d.name)} <button class="close" data-close>✕</button></h2>
+  openPanel(`<h2><span class="pin" style="background:${t.color}">${glyphHtml(d.type)}</span> ${esc(d.name)} <button class="close" data-close>✕</button></h2>
     <p class="muted small">Last change ${fmtTime(a.u)}${a.by ? " by " + esc(a.by) : ""}</p>
     ${inLoc ? `<p><a href="#" id="f-loc">${esc(ASSET_TYPES.LOCATION.glyph)} In ${esc(inLoc.data.name)} – show all devices there</a></p>` : ""}
     ${isLoc(a) ? `<h3>Devices here (${members.length})</h3>
-      ${members.map((m) => `<div class="list-item" data-member="${esc(m.id)}"><span class="pin mini" style="background:${typeOf(m).color}">${esc(typeOf(m).glyph)}</span> ${esc(m.data.name)} <span class="muted small">${esc(typeOf(m).label)} • ${esc(m.data.status)}</span></div>`).join("") || '<p class="muted small">No devices here yet – add the router, switches and APs.</p>'}
+      ${members.map((m) => `<div class="list-item" data-member="${esc(m.id)}"><span class="pin mini" style="background:${typeOf(m).color}">${glyphHtml(m.data.type, 12)}</span> ${esc(m.data.name)} <span class="muted small">${esc(typeOf(m).label)} • ${esc(m.data.status)}</span></div>`).join("") || '<p class="muted small">No devices here yet – add the router, switches and APs.</p>'}
       <div class="grid2"><select id="f-add-type">${optionList(Object.entries(ASSET_TYPES).filter(([k]) => k !== "LOCATION").map(([k, x]) => [k, x.label]), "SWITCH")}</select><button type="button" id="f-add">+ Add device here</button></div>` : ""}
     <label>Type <select id="f-type">${optionList(Object.entries(ASSET_TYPES).map(([k, x]) => [k, x.label]), d.type)}</select></label>
     <label>Name / ID <input id="f-name" value="${esc(d.name)}"></label>
@@ -634,7 +653,7 @@ function openAsset(a) {
     ${attributesEditor(t.fields, attrs, Object.values(PATTERN_KEYS))}
     <label>Notes <textarea id="f-notes">${esc(d.notes || "")}</textarea></label>
     ${photoSection(a.id)}
-    <div class="actions"><button class="primary" id="f-save">Save</button><button class="danger" id="f-delete">Delete</button></div>`);
+    <div class="actions">${saveButton("f-save", a)}<button class="danger" id="f-delete">Delete</button></div>`);
   wireAttributeAdder();
   loadPhotoThumbs();
   wirePhotoUpload("assets", a.id, a.site, [d.lat, d.lon]);
@@ -644,7 +663,7 @@ function openAsset(a) {
   panel().querySelectorAll("[data-member]").forEach((el) => (el.onclick = () => select("assets", el.dataset.member)));
   if ($("#f-add")) $("#f-add").onclick = () => createPin($("#f-add-type").value, "", [d.lat, d.lon], a.id, [], a.site).catch((e) => alert(e.message));
   if ($("#f-signal")) $("#f-signal").onclick = () => { $("#heat-select").value = "dev:" + a.id; refreshHeat(); };
-  $("#f-save").onclick = async () => {
+  wireSave("f-save", a, async () => {
     const attributes = readAttributes();
     // Keep pattern keys in the same format the phones write.
     Object.values(PATTERN_KEYS).forEach((k) => { if (attrs[k] !== undefined) attributes[k] = attrs[k]; });
@@ -660,15 +679,14 @@ function openAsset(a) {
         }
       }
     }
-    try {
-      const type = $("#f-type").value;
-      // A location turned into something else lets its devices go; a device turned into a location leaves its own.
-      const extra = isLoc(a) && type !== "LOCATION" ? releaseChanges(a) : [];
-      await push([change("assets", a.id, a.site, "", { ...d, type, name: $("#f-name").value.trim() || d.name, status: $("#f-status").value, notes: $("#f-notes").value, attributes,
-        group: type === "LOCATION" ? "" : d.group || "" }), ...extra]);
-      openDetails();
-    } catch (e) { alert(e.message); }
-  };
+    const type = $("#f-type").value;
+    // A location turned into something else lets its devices go; a device turned into a location leaves its own.
+    const extra = isLoc(a) && type !== "LOCATION" ? releaseChanges(a) : [];
+    const ch = change("assets", a.id, a.site, "", { ...d, type, name: $("#f-name").value.trim() || d.name, status: $("#f-status").value, notes: $("#f-notes").value, attributes,
+      group: type === "LOCATION" ? "" : d.group || "" });
+    await push([ch, ...extra]);
+    return ch.u;
+  });
   $("#f-delete").onclick = async () => {
     if (!confirm(isLoc(a) ? `Delete location “${d.name}” and its photos? The ${members.length} device(s) in it are kept as separate pins.` : `Delete “${d.name}” and its photos?`)) return;
     const photos = [...S.photos.values()].filter((p) => p.data.asset === a.id);
@@ -698,7 +716,7 @@ function openPath(p) {
     ${attributesEditor(k.fields, d.attributes || {})}
     <label>Notes <textarea id="r-notes">${esc(d.notes || "")}</textarea></label>
     ${photoSection(p.id)}
-    <div class="actions"><button class="primary" id="r-save">Save</button><button class="danger" id="r-delete">Delete</button></div>`);
+    <div class="actions">${saveButton("r-save", p)}<button class="danger" id="r-delete">Delete</button></div>`);
   wireAttributeAdder();
   loadPhotoThumbs();
   wirePhotoUpload("paths", p.id, p.site, pts[0]);
@@ -709,18 +727,17 @@ function openPath(p) {
     $("#r-cable-label").textContent = nk.cable || "";
   };
   $("#r-route").onclick = () => startDraw(d.kind, p.id);
-  $("#r-save").onclick = async () => {
+  wireSave("r-save", p, async () => {
     const kind = $("#r-kind").value, nk = PATH_KINDS[kind];
     const color = $("#r-color").value;
-    try {
-      await push([change("paths", p.id, p.site, "", {
-        ...d, kind, name: $("#r-name").value.trim() || d.name, status: $("#r-status").value, notes: $("#r-notes").value,
-        fiberCount: nk.fiber && $("#r-fiber").value !== "" ? parseInt($("#r-fiber").value, 10) : null,
-        cableType: nk.cable ? $("#r-cable").value.trim() : "", color: color ? Number(color) : null, attributes: readAttributes(),
-      })]);
-      openDetails();
-    } catch (e) { alert(e.message); }
-  };
+    const ch = change("paths", p.id, p.site, "", {
+      ...d, kind, name: $("#r-name").value.trim() || d.name, status: $("#r-status").value, notes: $("#r-notes").value,
+      fiberCount: nk.fiber && $("#r-fiber").value !== "" ? parseInt($("#r-fiber").value, 10) : null,
+      cableType: nk.cable ? $("#r-cable").value.trim() : "", color: color ? Number(color) : null, attributes: readAttributes(),
+    });
+    await push([ch]);
+    return ch.u;
+  });
   $("#r-delete").onclick = async () => {
     if (!confirm(`Delete route “${d.name}”?`)) return;
     const photos = [...S.photos.values()].filter((x) => x.data.path === p.id);
@@ -736,7 +753,7 @@ function openList() {
   const paths = sitePaths().sort((a, b) => a.data.name.localeCompare(b.data.name));
   openPanel(`<h2>Pins &amp; routes <button class="close" data-close>✕</button></h2>
     <input id="l-q" placeholder="Search…">
-    <h3>Pins (${assets.length})</h3><div id="l-pins">${assets.map((a) => `<div class="list-item" data-a="${esc(a.id)}"><span class="pin" style="display:inline-block;width:20px;height:20px;line-height:17px;font-size:10px;background:${(ASSET_TYPES[a.data.type] || ASSET_TYPES.OTHER).color}">${esc((ASSET_TYPES[a.data.type] || ASSET_TYPES.OTHER).glyph)}</span> ${esc(a.data.name)} <span class="muted small">${esc((ASSET_TYPES[a.data.type] || ASSET_TYPES.OTHER).label)}${locationOf(a) ? " • in " + esc(locationOf(a).data.name) : ""}</span></div>`).join("")}</div>
+    <h3>Pins (${assets.length})</h3><div id="l-pins">${assets.map((a) => `<div class="list-item" data-a="${esc(a.id)}"><span class="pin" style="display:inline-block;width:20px;height:20px;line-height:17px;font-size:10px;background:${(ASSET_TYPES[a.data.type] || ASSET_TYPES.OTHER).color}">${glyphHtml(a.data.type, 12)}</span> ${esc(a.data.name)} <span class="muted small">${esc((ASSET_TYPES[a.data.type] || ASSET_TYPES.OTHER).label)}${locationOf(a) ? " • in " + esc(locationOf(a).data.name) : ""}</span></div>`).join("")}</div>
     <h3>Routes (${paths.length})</h3><div id="l-paths">${paths.map((p) => `<div class="list-item" data-p="${esc(p.id)}">${esc(p.data.name)} <span class="muted small">${esc((PATH_KINDS[p.data.kind] || {}).label || "")} • ${fmtDist(pathLength(decodePoints(p.data.points)))}</span></div>`).join("")}</div>`);
   panel().querySelectorAll("[data-a]").forEach((el) => (el.onclick = () => { const a = S.assets.get(el.dataset.a); map.setView([a.data.lat, a.data.lon], Math.max(map.getZoom(), 18)); select("assets", a.id); }));
   panel().querySelectorAll("[data-p]").forEach((el) => (el.onclick = () => { const p = S.paths.get(el.dataset.p); const pts = decodePoints(p.data.points); if (pts.length) map.fitBounds(pts, { maxZoom: 19 }); select("paths", p.id); }));
@@ -807,7 +824,7 @@ function openCombine() {
   const clusters = stackedPins();
   openPanel(`<h2>Combine stacked pins <button class="close" data-close>✕</button></h2>
     <p class="muted small">${clusters.length ? "These pins are within a few metres of each other. Combine each group into one location pin." : "No pins within a few metres of each other in this site."}</p>
-    ${clusters.map((c, i) => `<div class="card stack">${c.map((a) => `<div><span class="pin mini" style="background:${typeOf(a).color}">${esc(typeOf(a).glyph)}</span> ${esc(a.data.name)}</div>`).join("")}
+    ${clusters.map((c, i) => `<div class="card stack">${c.map((a) => `<div><span class="pin mini" style="background:${typeOf(a).color}">${glyphHtml(a.data.type, 12)}</span> ${esc(a.data.name)}</div>`).join("")}
       <label>Location name <input data-stack-name="${i}" placeholder="e.g. IDF-2 closet"></label>
       <button class="primary" data-stack="${i}">Combine ${c.length} pins</button></div>`).join("")}`);
   panel().querySelectorAll("[data-stack]").forEach((b) => (b.onclick = async () => {

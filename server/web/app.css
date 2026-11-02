@@ -116,7 +116,13 @@ main { position: fixed; top: 48px; left: 0; right: 0; bottom: 0; }
   .layers-box label.row { font-size: 15px; gap: 8px; }
   .layers-box input[type=checkbox] { width: 20px; height: 20px; }
   body.layers-open #btn-layers { background: var(--primary); color: var(--primary-text); }
-  .leaflet-control-layers { display: none; }
   #status { margin-left: 0; }
   .hint { top: 8px; font-size: 13px; }
 }
+
+/* Wi-Fi icon used for access points */
+.wifi-ico { vertical-align: -3px; }
+.loc-pin .wifi-ico { vertical-align: -2px; }
+/* Save buttons: grey while saving, green once saved (until something is edited again) */
+button:disabled { opacity: .55; cursor: default; }
+button.primary.saved { background: #2e7d32; border-color: #2e7d32; color: #fff; }

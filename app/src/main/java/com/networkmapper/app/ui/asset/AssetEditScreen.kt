@@ -2,6 +2,9 @@
 
 package com.networkmapper.app.ui.asset
 
+import com.networkmapper.app.ui.components.SaveState
+import com.networkmapper.app.ui.components.SaveTextButton
+import com.networkmapper.app.ui.components.SaveButton
 import android.app.Application
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -263,6 +266,28 @@ fun AssetEditScreen(
         }
     }
 
+    // Save stays on this screen: grey while saving, then green "Saved ✓" until something is edited again.
+    var saving by remember { mutableStateOf(false) }
+    var savedForm by remember { mutableStateOf<Any?>(null) }
+    val saveState = when {
+        saving -> SaveState.SAVING
+        savedForm != null && savedForm == form -> SaveState.SAVED
+        else -> SaveState.IDLE
+    }
+    fun saveHere() {
+        if (saving) return
+        saving = true
+        scope.launch {
+            val err = vm.save()
+            saving = false
+            if (err != null) {
+                Toast.makeText(context, err, Toast.LENGTH_LONG).show()
+            } else {
+                savedForm = vm.form.value
+            }
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -272,7 +297,7 @@ fun AssetEditScreen(
                 },
                 actions = {
                     IconButton(onClick = { confirmDelete = true }) { Icon(Icons.Default.Delete, "Delete") }
-                    TextButton(onClick = { saveThen(onBack) }) { Text("Save") }
+                    SaveTextButton(saveState, ::saveHere)
                 },
             )
         },
@@ -512,7 +537,7 @@ fun AssetEditScreen(
                 minLines = 3,
                 modifier = Modifier.fillMaxWidth(),
             )
-            Button(onClick = { saveThen(onBack) }, modifier = Modifier.fillMaxWidth()) { Text("Save") }
+            SaveButton(saveState, ::saveHere, Modifier.fillMaxWidth())
             location?.let { loc ->
                 val lat = f.lat.toDoubleOrNull()
                 val lon = f.lon.toDoubleOrNull()

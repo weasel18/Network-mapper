@@ -25,6 +25,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Button
+import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.PhotoLibrary
@@ -74,7 +77,11 @@ fun TypeBadge(type: AssetType, size: Dp = 32.dp) {
             .border(2.dp, Color.White, CircleShape),
         contentAlignment = Alignment.Center,
     ) {
-        Text(type.glyph, color = Color.White, fontWeight = FontWeight.Bold, fontSize = (size.value * 0.45f).sp)
+        if (type == AssetType.ACCESS_POINT) {
+            Icon(Icons.Default.Wifi, contentDescription = type.label, tint = Color.White, modifier = Modifier.size(size * 0.62f))
+        } else {
+            Text(type.glyph, color = Color.White, fontWeight = FontWeight.Bold, fontSize = (size.value * 0.45f).sp)
+        }
     }
 }
 
@@ -333,4 +340,48 @@ fun ConfirmDialog(title: String, text: String, confirm: String, onConfirm: () ->
         confirmButton = { TextButton(onClick = { onConfirm(); onDismiss() }) { Text(confirm) } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
+}
+
+/** Colour of a Save button once the changes are saved (until something is edited again). */
+val SavedGreen = Color(0xFF2E7D32)
+
+/** Save state shown on Save buttons: grey "Saving…" while saving, green "Saved ✓" afterwards. */
+enum class SaveState { IDLE, SAVING, SAVED }
+
+/** Full-width Save button that shows [state]. */
+@Composable
+fun SaveButton(state: SaveState, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Button(
+        onClick = onClick,
+        enabled = state != SaveState.SAVING,
+        colors = if (state == SaveState.SAVED) {
+            ButtonDefaults.buttonColors(containerColor = SavedGreen, contentColor = Color.White)
+        } else {
+            ButtonDefaults.buttonColors()
+        },
+        modifier = modifier,
+    ) {
+        Text(
+            when (state) {
+                SaveState.IDLE -> "Save"
+                SaveState.SAVING -> "Saving…"
+                SaveState.SAVED -> "Saved ✓"
+            },
+        )
+    }
+}
+
+/** Top-bar Save text button that shows [state]. */
+@Composable
+fun SaveTextButton(state: SaveState, onClick: () -> Unit) {
+    TextButton(onClick = onClick, enabled = state != SaveState.SAVING) {
+        Text(
+            when (state) {
+                SaveState.IDLE -> "Save"
+                SaveState.SAVING -> "Saving…"
+                SaveState.SAVED -> "Saved ✓"
+            },
+            color = if (state == SaveState.SAVED) SavedGreen else Color.Unspecified,
+        )
+    }
 }

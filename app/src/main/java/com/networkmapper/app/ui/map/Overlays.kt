@@ -281,7 +281,10 @@ class MapOverlayController(private val context: Context, val mapView: MapView) {
             textSize = 12.5f * d
             textAlign = Paint.Align.CENTER
         }
-        val widths = chips.map { maxOf(chipH, chipPaint.measureText(it.text) + 12f * d) }
+        val iconW = chipH * 0.72f
+        // Access points show a Wi-Fi icon in place of their letter, followed by any "×2".
+        fun label(chip: LocationChips.Chip) = if (chip.wifi) chip.text.drop(1) else chip.text
+        val widths = chips.map { maxOf(chipH, (if (it.wifi) iconW else 0f) + chipPaint.measureText(label(it)) + 12f * d) }
         val bodyW = pad * 2 + widths.sum() + gap * (widths.size - 1).coerceAtLeast(0)
         val bodyH = chipH + pad * 2
         val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -318,7 +321,19 @@ class MapOverlayController(private val context: Context, val mapView: MapView) {
             c.drawRoundRect(x, top + pad, x + cw, top + pad + chipH, chipH / 2, chipH / 2, p)
             chipPaint.color = 0xFFFFFFFF.toInt()
             val ty = top + pad + chipH / 2 - (chipPaint.descent() + chipPaint.ascent()) / 2
-            c.drawText(chip.text, x + cw / 2, ty, chipPaint)
+            if (chip.wifi) {
+                val rest = label(chip)
+                val contentW = iconW + chipPaint.measureText(rest)
+                val start = x + (cw - contentW) / 2
+                WifiGlyph.draw(c, start + iconW / 2, top + pad + chipH / 2, iconW, 0xFFFFFFFF.toInt())
+                if (rest.isNotEmpty()) {
+                    chipPaint.textAlign = Paint.Align.LEFT
+                    c.drawText(rest, start + iconW, ty, chipPaint)
+                    chipPaint.textAlign = Paint.Align.CENTER
+                }
+            } else {
+                c.drawText(chip.text, x + cw / 2, ty, chipPaint)
+            }
             x += cw + gap
         }
         // Name with a white halo so it reads on any map.
@@ -353,11 +368,15 @@ class MapOverlayController(private val context: Context, val mapView: MapView) {
         paint.color = type.colorArgb.toInt()
         c.drawCircle(r, r, inner - 2.5f * density, paint)
         paint.color = 0xFFFFFFFF.toInt()
-        paint.typeface = Typeface.DEFAULT_BOLD
-        paint.textAlign = Paint.Align.CENTER
-        paint.textSize = inner * 0.95f
-        val y = r - (paint.descent() + paint.ascent()) / 2f
-        c.drawText(type.glyph, r, y, paint)
+        if (type == AssetType.ACCESS_POINT) {
+            WifiGlyph.draw(c, r, r, inner * 1.15f, 0xFFFFFFFF.toInt())
+        } else {
+            paint.typeface = Typeface.DEFAULT_BOLD
+            paint.textAlign = Paint.Align.CENTER
+            paint.textSize = inner * 0.95f
+            val y = r - (paint.descent() + paint.ascent()) / 2f
+            c.drawText(type.glyph, r, y, paint)
+        }
         return BitmapDrawable(context.resources, bmp)
     }
 }
@@ -666,7 +685,8 @@ class MyLocationOverlay(private val density: Float) : Overlay() {
 
 /** The chips on a location pin: one per device type, most important first, e.g. R, S×2, A. */
 object LocationChips {
-    data class Chip(val text: String, val color: Int)
+    /** [wifi]: draw a Wi-Fi icon in place of the first character (access points). */
+    data class Chip(val text: String, val color: Int, val wifi: Boolean = false)
 
     private val priority = listOf(
         AssetType.ROUTER, AssetType.SWITCH, AssetType.ACCESS_POINT, AssetType.WIRELESS_BRIDGE, AssetType.FDH,
@@ -677,9 +697,30 @@ object LocationChips {
     fun of(members: List<Asset>): List<Chip> {
         if (members.isEmpty()) return listOf(Chip(AssetType.LOCATION.glyph, AssetType.LOCATION.colorArgb.toInt()))
         val byType = members.groupBy { it.type }.toList().sortedBy { (t, _) -> priority.indexOf(t).let { if (it < 0) 99 else it } }
-        val chips = byType.map { (t, list) -> Chip(if (list.size > 1) "${t.glyph}×${list.size}" else t.glyph, t.colorArgb.toInt()) }
+        val chips = byType.map { (t, list) ->
+            Chip(if (list.size > 1) "${t.glyph}×${list.size}" else t.glyph, t.colorArgb.toInt(), wifi = t == AssetType.ACCESS_POINT)
+        }
         if (chips.size <= MAX) return chips
         val rest = byType.drop(MAX - 1).sumOf { it.second.size }
         return chips.take(MAX - 1) + Chip("+$rest", 0xFF607D8B.toInt())
+    }
+}
+
+/** The Wi-Fi symbol (three arcs and a dot) drawn for access points, centred on (cx, cy), [size] tall. */
+object WifiGlyph {
+    fun draw(c: Canvas, cx: Float, cy: Float, size: Float, color: Int) {
+        val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            this.color = color
+            style = Paint.Style.STROKE
+            strokeCap = Paint.Cap.ROUND
+            strokeWidth = size * 0.12f
+        }
+        val baseY = cy + size * 0.38f // centre of the dot; arcs radiate upwards from it
+        for (f in floatArrayOf(0.30f, 0.56f, 0.82f)) {
+            val r = size * f
+            c.drawArc(cx - r, baseY - r, cx + r, baseY + r, 225f, 90f, false, p)
+        }
+        p.style = Paint.Style.FILL
+        c.drawCircle(cx, baseY, size * 0.085f, p)
     }
 }
