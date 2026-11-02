@@ -78,3 +78,12 @@ main { position: fixed; top: 48px; left: 0; right: 0; bottom: 0; }
     border-radius: 14px 14px 0 0; box-shadow: 0 -4px 16px rgba(0,0,0,.15); z-index: 1001; }
   #site-menu { left: 8px; }
 }
+.loc-pin { position: absolute; left: 0; top: 0; transform: translate(-50%, -50%); display: flex; gap: 3px; padding: 4px; white-space: nowrap;
+  background: #fff; border: 2px solid #37474F; border-radius: 18px; box-shadow: 0 1px 4px rgba(0,0,0,.4); cursor: pointer; }
+.loc-pin span { min-width: 22px; height: 22px; padding: 0 6px; box-sizing: border-box; border-radius: 11px; color: #fff;
+  font: bold 12.5px/22px system-ui, sans-serif; text-align: center; }
+.loc-pin.selected { outline: 5px solid rgba(255, 235, 59, .8); }
+.loc-label { position: absolute; left: 0; top: 20px; transform: translateX(-50%); white-space: nowrap; font: bold 11px system-ui, sans-serif;
+  color: #263238; text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 3px #fff; pointer-events: none; }
+.pin.mini { display: inline-block; width: 20px; height: 20px; font-size: 10px; line-height: 17px; vertical-align: middle; }
+.card.stack { padding: 10px; margin: 8px 0; display: grid; gap: 4px; }

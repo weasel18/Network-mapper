@@ -14,8 +14,12 @@ const ASSET_TYPES = {
   ROUTER: { label: "Router / Gateway / OLT", color: "#3949AB", glyph: "R", fields: ["Hostname", "Model", "IP address", "WAN / Uplink", "Serial", "Wi-Fi MAC / BSSID"], bssidField: "Wi-Fi MAC / BSSID" },
   POLE: { label: "Pole / Tower", color: "#6D4C41", glyph: "P", fields: ["Pole ID", "Owner", "Height", "Attachment height", "Make-ready notes"] },
   BUILDING_ENTRY: { label: "Building entry / Demarc", color: "#D81B60", glyph: "D", fields: ["Address", "Room / Location", "Contact", "Demarc type"] },
+  LOCATION: { label: "Location / Closet / Rack", color: "#37474F", glyph: "▣", fields: ["Building / Floor", "Room", "Rack / Cabinet", "Access / Keys", "Power / UPS", "Contact"] },
   OTHER: { label: "Other / Photo pin", color: "#757575", glyph: "?", fields: [] },
 };
+// Pins dropped or moved this close to another pin are offered to share its location (closet / rack).
+const GROUP_RADIUS_M = 6;
+const CHIP_PRIORITY = ["ROUTER", "SWITCH", "ACCESS_POINT", "WIRELESS_BRIDGE", "FDH", "SPLICE", "FIBER_JUNCTION", "SLACK_LOOP", "BUILDING_ENTRY", "POLE", "OTHER"];
 const PATH_KINDS = {
   FIBER_UNDERGROUND: { label: "Fiber – underground", color: "#1565C0", dashed: false, fiber: true, cable: "Cable type", fields: ["Cable ID", "Manufacturer", "Buffer tubes", "Conduit size", "Depth", "Install date"] },
   FIBER_AERIAL: { label: "Fiber – aerial", color: "#6A1B9A", dashed: false, fiber: true, cable: "Cable type", fields: ["Cable ID", "Manufacturer", "Buffer tubes", "Strand / Messenger", "Install date"] },
@@ -157,6 +161,70 @@ function initMap() {
 
 const siteAssets = () => [...S.assets.values()].filter((a) => a.site === S.site);
 const sitePaths = () => [...S.paths.values()].filter((p) => p.site === S.site);
+const typeOf = (a) => ASSET_TYPES[a.data.type] || ASSET_TYPES.OTHER;
+
+// ---------------------------------------------------------------- locations (several devices in one closet / rack)
+
+const isLoc = (a) => !!a && a.data.type === "LOCATION";
+function locationOf(a) {
+  const l = a.data.group ? S.assets.get(a.data.group) : null;
+  return isLoc(l) && l.site === a.site ? l : null;
+}
+const membersOf = (loc) => [...S.assets.values()].filter((m) => m.data.group === loc.id && !isLoc(m) && m.site === loc.site)
+  .sort((x, y) => CHIP_PRIORITY.indexOf(x.data.type) - CHIP_PRIORITY.indexOf(y.data.type) || x.data.name.localeCompare(y.data.name));
+function locationChips(members) {
+  if (!members.length) return [[ASSET_TYPES.LOCATION.glyph, ASSET_TYPES.LOCATION.color]];
+  const byType = new Map();
+  members.forEach((m) => byType.set(m.data.type, (byType.get(m.data.type) || 0) + 1));
+  const rank = (t) => (CHIP_PRIORITY.includes(t) ? CHIP_PRIORITY.indexOf(t) : 99);
+  const types = [...byType.keys()].sort((a, b) => rank(a) - rank(b));
+  const chips = types.map((t) => { const x = ASSET_TYPES[t] || ASSET_TYPES.OTHER, n = byType.get(t); return [n > 1 ? `${x.glyph}×${n}` : x.glyph, x.color]; });
+  if (chips.length <= 4) return chips;
+  const rest = types.slice(3).reduce((s, t) => s + byType.get(t), 0);
+  return [...chips.slice(0, 3), [`+${rest}`, "#607D8B"]];
+}
+function locationIcon(loc, members, selected) {
+  const chips = locationChips(members).map(([t, c]) => `<span style="background:${c}">${esc(t)}</span>`).join("");
+  return L.divIcon({ className: "", iconSize: [0, 0], iconAnchor: [0, 0],
+    html: `<div class="loc-pin${selected ? " selected" : ""}">${chips}</div><div class="loc-label">${esc(loc.data.name)}</div>` });
+}
+/** A location, or a lone device, near pt that a new / moved device could share. Existing locations win. */
+function groupOfferFor(pt, moving) {
+  if (isLoc(moving)) return null;
+  const near = siteAssets()
+    .filter((a) => a.id !== moving?.id && a.id !== moving?.data.group && (isLoc(a) || !locationOf(a)))
+    .map((a) => [a, distanceM(pt, [a.data.lat, a.data.lon])]).filter(([, d]) => d <= GROUP_RADIUS_M)
+    .sort((x, y) => x[1] - y[1]);
+  const best = near.find(([a]) => isLoc(a)) || near[0];
+  return best ? { target: best[0], dist: best[1] } : null;
+}
+function newLocation(at, site, name) {
+  const id = uid();
+  const n = [...S.assets.values()].filter((a) => isLoc(a) && a.site === site).length + 1;
+  return change("assets", id, site, "", { type: "LOCATION", name: (name || "").trim() || `Location ${n}`, lat: at.data.lat, lon: at.data.lon,
+    alt: at.data.alt ?? null, acc: at.data.acc ?? null, status: "Active", notes: "", attributes: {}, createdAt: Date.now(), group: "" });
+}
+const joinChange = (dev, loc) => change("assets", dev.id, dev.site, "", { ...dev.data, group: loc.id, lat: loc.data.lat, lon: loc.data.lon, acc: loc.data.acc ?? null, alt: loc.data.alt ?? null });
+/** Takes a device out of its location, a few metres away so it can be clicked. */
+const takeOutChange = (dev, at, bearing = 90) => { const [lat, lon] = destination(at, bearing, 4); return change("assets", dev.id, dev.site, "", { ...dev.data, group: "", lat, lon, acc: null }); };
+const releaseChanges = (loc) => { const ms = membersOf(loc); return ms.map((m, i) => takeOutChange(m, [loc.data.lat, loc.data.lon], (360 * i) / ms.length)); };
+/** Changes that put `dev` (an existing record, or null for a brand-new pin) into the offered location; returns [location, changes]. */
+function joinOffer(offer, locName) {
+  if (isLoc(offer.target)) return [offer.target, []];
+  const locCh = newLocation(offer.target, offer.target.site, locName);
+  const loc = { id: locCh.id, data: locCh.data, site: locCh.site };
+  return [loc, [locCh, joinChange(offer.target, loc)]];
+}
+function offerPanel(offer, what, separateLabel, onJoin, onSeparate) {
+  const t = offer.target, d = `${Math.round(offer.dist)} m`;
+  openPanel(`<h2>${isLoc(t) ? `Add to ${esc(t.data.name)}?` : "Same location?"} <button class="close" data-close>✕</button></h2>
+    <p>${isLoc(t) ? `“${esc(t.data.name)}” is ${d} away. Put ${esc(what)} in it? It will show on that location's pin instead of its own.`
+      : `“${esc(t.data.name)}” (${esc(typeOf(t).label)}) is ${d} away. Put ${esc(what)} and it together in one location, shown as a single pin?`}</p>
+    ${isLoc(t) ? "" : `<label>Location name <input id="o-name" placeholder="e.g. IDF-2 closet, Rack A"></label>`}
+    <div class="actions"><button class="primary" id="o-join">${isLoc(t) ? "Add to location" : "Create location"}</button><button id="o-sep">${esc(separateLabel)}</button></div>`);
+  $("#o-join").onclick = () => onJoin($("#o-name") ? $("#o-name").value : "").catch((e) => alert(e.message));
+  $("#o-sep").onclick = () => onSeparate().catch((e) => alert(e.message));
+}
 
 function pinIcon(type, selected) {
   const t = ASSET_TYPES[type] || ASSET_TYPES.OTHER;
@@ -214,7 +282,15 @@ function render() {
     for (const a of siteAssets()) {
       const sel = S.selected && S.selected.id === a.id;
       const pos = [a.data.lat, a.data.lon];
-      const m = L.marker(pos, { icon: pinIcon(a.data.type, sel), draggable: S.mode === "move-pin" && sel, title: a.data.name });
+      const loc = isLoc(a) ? null : locationOf(a);
+      if (loc) { // drawn inside its location's pin; only its coverage pattern is drawn here
+        const pat = showPatterns && readPattern(a.data.attributes || {});
+        if (pat) drawPattern([loc.data.lat, loc.data.lon], pat, typeOf(a).color, sel);
+        continue;
+      }
+      const members = isLoc(a) ? membersOf(a) : [];
+      const icon = isLoc(a) ? locationIcon(a, members, sel || members.some((x) => S.selected && x.id === S.selected.id)) : pinIcon(a.data.type, sel);
+      const m = L.marker(pos, { icon, draggable: S.mode === "move-pin" && sel, title: a.data.name });
       m.on("click", (e) => { L.DomEvent.stopPropagation(e); onPinClick(a); });
       m.on("dragend", () => { const ll = m.getLatLng(); S.movedTo = [ll.lat, ll.lng]; showHint("Pin moved – Save to keep it", [["Save position", savePinMove], ["Cancel", cancelMode]]); });
       layers.pins.addLayer(m);
@@ -323,16 +399,28 @@ async function finishDraw() {
 }
 
 async function savePinMove() {
-  const a = S.assets.get(S.selected.id);
-  if (a && S.movedTo) await push([change("assets", a.id, a.site, "", { ...a.data, lat: S.movedTo[0], lon: S.movedTo[1], acc: null })]);
-  cancelMode();
+  const a = S.selected && S.assets.get(S.selected.id), to = S.movedTo;
+  if (!a || !to) return cancelMode();
+  const moved = change("assets", a.id, a.site, "", { ...a.data, lat: to[0], lon: to[1], acc: null });
+  if (isLoc(a)) { // its devices move with it
+    await push([moved, ...membersOf(a).map((m) => change("assets", m.id, m.site, "", { ...m.data, lat: to[0], lon: to[1], acc: null }))]);
+    return cancelMode();
+  }
+  const offer = groupOfferFor(to, a);
+  if (!offer) { await push([moved]); return cancelMode(); }
+  hideHint();
+  offerPanel(offer, `“${a.data.name}”`, "Just move it", async (name) => {
+    const [loc, changes] = joinOffer(offer, name);
+    await push([...changes, joinChange(a, loc)]);
+    cancelMode(); select("assets", loc.id);
+  }, async () => { await push([moved]); cancelMode(); });
 }
 
 // ---------------------------------------------------------------- side panel
 
 const panel = () => $("#panel");
 function closePanel() { panel().classList.add("hidden"); panel().innerHTML = ""; }
-function openPanel(html) { panel().innerHTML = html; panel().classList.remove("hidden"); panel().querySelectorAll("[data-close]").forEach((b) => (b.onclick = () => { S.selected = null; closePanel(); render(); })); }
+function openPanel(html) { panel().innerHTML = html; panel().classList.remove("hidden"); panel().querySelectorAll("[data-close]").forEach((b) => (b.onclick = () => { S.selected = null; if (S.mode) cancelMode(); closePanel(); render(); })); }
 
 function optionList(items, current) { return items.map(([v, l]) => `<option value="${esc(v)}"${v === current ? " selected" : ""}>${esc(l)}</option>`).join(""); }
 
@@ -449,17 +537,26 @@ function openNewPin(pt) {
     <label>Type <select id="np-type">${optionList(Object.entries(ASSET_TYPES).map(([k, t]) => [k, t.label]), "FIBER_JUNCTION")}</select></label>
     <label>Name <input id="np-name" placeholder="optional"></label>
     <div class="actions"><button class="primary" id="np-create">Create</button></div>`);
-  $("#np-create").onclick = async () => {
-    const type = $("#np-type").value;
-    const n = siteAssets().filter((a) => a.data.type === type).length + 1;
+  $("#np-create").onclick = () => {
+    const type = $("#np-type").value, name = $("#np-name").value.trim();
     const label = ASSET_TYPES[type].label.split(" /")[0].split(" (")[0];
-    const id = uid();
-    await push([change("assets", id, S.site, "", {
-      type, name: $("#np-name").value.trim() || `${label} ${n}`, lat: pt[0], lon: pt[1], alt: null, acc: null,
-      status: "Active", notes: "", attributes: {}, createdAt: Date.now(),
-    })]);
-    select("assets", id);
+    const offer = type === "LOCATION" ? null : groupOfferFor(pt, null);
+    if (!offer) return createPin(type, name, pt, "", []).catch((e) => alert(e.message));
+    offerPanel(offer, `the new ${label} pin`, "Separate pin", async (locName) => {
+      const [loc, changes] = joinOffer(offer, locName);
+      await createPin(type, name, [loc.data.lat, loc.data.lon], loc.id, changes);
+    }, () => createPin(type, name, pt, "", []));
   };
+}
+async function createPin(type, name, at, group, extra, site = S.site) {
+  const n = [...S.assets.values()].filter((a) => a.site === site && a.data.type === type).length + 1;
+  const label = ASSET_TYPES[type].label.split(" /")[0].split(" (")[0];
+  const id = uid();
+  await push([...extra, change("assets", id, site, "", {
+    type, name: name || `${label} ${n}`, lat: at[0], lon: at[1], alt: null, acc: null,
+    status: "Active", notes: "", attributes: {}, createdAt: Date.now(), group: group || "",
+  })]);
+  select("assets", id);
 }
 
 function openAsset(a) {
@@ -468,13 +565,19 @@ function openAsset(a) {
   const attrs = d.attributes || {};
   const pat = readPattern(attrs);
   const macs = t.bssidField ? parseMacs(attrs[t.bssidField]) : [];
+  const inLoc = isLoc(a) ? null : locationOf(a);
+  const members = isLoc(a) ? membersOf(a) : [];
   openPanel(`<h2><span class="pin" style="background:${t.color}">${esc(t.glyph)}</span> ${esc(d.name)} <button class="close" data-close>✕</button></h2>
     <p class="muted small">Last change ${fmtTime(a.u)}${a.by ? " by " + esc(a.by) : ""}</p>
+    ${inLoc ? `<p><a href="#" id="f-loc">${esc(ASSET_TYPES.LOCATION.glyph)} In ${esc(inLoc.data.name)} – show all devices there</a></p>` : ""}
+    ${isLoc(a) ? `<h3>Devices here (${members.length})</h3>
+      ${members.map((m) => `<div class="list-item" data-member="${esc(m.id)}"><span class="pin mini" style="background:${typeOf(m).color}">${esc(typeOf(m).glyph)}</span> ${esc(m.data.name)} <span class="muted small">${esc(typeOf(m).label)} • ${esc(m.data.status)}</span></div>`).join("") || '<p class="muted small">No devices here yet – add the router, switches and APs.</p>'}
+      <div class="grid2"><select id="f-add-type">${optionList(Object.entries(ASSET_TYPES).filter(([k]) => k !== "LOCATION").map(([k, x]) => [k, x.label]), "SWITCH")}</select><button type="button" id="f-add">+ Add device here</button></div>` : ""}
     <label>Type <select id="f-type">${optionList(Object.entries(ASSET_TYPES).map(([k, x]) => [k, x.label]), d.type)}</select></label>
     <label>Name / ID <input id="f-name" value="${esc(d.name)}"></label>
     <label>Status <select id="f-status">${optionList([...new Set([...STATUSES, d.status])].map((s) => [s, s]), d.status)}</select></label>
     <p class="small">${Number(d.lat).toFixed(7)}, ${Number(d.lon).toFixed(7)}${d.acc ? ` • ±${Math.round(d.acc)} m` : ""}
-      <button type="button" id="f-move">Move pin</button>
+      ${inLoc ? '<button type="button" id="f-takeout">Take out of location</button>' : `<button type="button" id="f-move">${isLoc(a) ? "Move (with its devices)" : "Move pin"}</button>`}
       <a href="https://www.google.com/maps/dir/?api=1&destination=${d.lat},${d.lon}" target="_blank" rel="noopener">Directions</a></p>
     ${macs.length ? `<p class="small">Radios: ${macs.map((m) => `<span class="chip">${esc(S.apNames.get(m)?.data.name || m)}</span>`).join("")}
       <button type="button" id="f-signal">Signal map</button></p>` : ""}
@@ -493,7 +596,11 @@ function openAsset(a) {
   wireAttributeAdder();
   loadPhotoThumbs();
   wirePhotoUpload("assets", a.id, a.site, [d.lat, d.lon]);
-  $("#f-move").onclick = () => { S.mode = "move-pin"; render(); showHint("Drag the pin to its new position", [["Cancel", cancelMode]]); };
+  if ($("#f-move")) $("#f-move").onclick = () => { S.mode = "move-pin"; render(); showHint("Drag the pin to its new position", [["Cancel", cancelMode]]); };
+  if ($("#f-takeout")) $("#f-takeout").onclick = async () => { await push([takeOutChange(a, [inLoc.data.lat, inLoc.data.lon])]); openDetails(); };
+  if ($("#f-loc")) $("#f-loc").onclick = (e) => { e.preventDefault(); select("assets", inLoc.id); };
+  panel().querySelectorAll("[data-member]").forEach((el) => (el.onclick = () => select("assets", el.dataset.member)));
+  if ($("#f-add")) $("#f-add").onclick = () => createPin($("#f-add-type").value, "", [d.lat, d.lon], a.id, [], a.site).catch((e) => alert(e.message));
   if ($("#f-signal")) $("#f-signal").onclick = () => { $("#heat-select").value = "dev:" + a.id; refreshHeat(); };
   $("#f-save").onclick = async () => {
     const attributes = readAttributes();
@@ -512,14 +619,18 @@ function openAsset(a) {
       }
     }
     try {
-      await push([change("assets", a.id, a.site, "", { ...d, type: $("#f-type").value, name: $("#f-name").value.trim() || d.name, status: $("#f-status").value, notes: $("#f-notes").value, attributes })]);
+      const type = $("#f-type").value;
+      // A location turned into something else lets its devices go; a device turned into a location leaves its own.
+      const extra = isLoc(a) && type !== "LOCATION" ? releaseChanges(a) : [];
+      await push([change("assets", a.id, a.site, "", { ...d, type, name: $("#f-name").value.trim() || d.name, status: $("#f-status").value, notes: $("#f-notes").value, attributes,
+        group: type === "LOCATION" ? "" : d.group || "" }), ...extra]);
       openDetails();
     } catch (e) { alert(e.message); }
   };
   $("#f-delete").onclick = async () => {
-    if (!confirm(`Delete “${d.name}” and its photos?`)) return;
+    if (!confirm(isLoc(a) ? `Delete location “${d.name}” and its photos? The ${members.length} device(s) in it are kept as separate pins.` : `Delete “${d.name}” and its photos?`)) return;
     const photos = [...S.photos.values()].filter((p) => p.data.asset === a.id);
-    await push([...photos.map((p) => tomb("photos", p.id, a.site, a.id)), tomb("assets", a.id, a.site)]);
+    await push([...(isLoc(a) ? releaseChanges(a) : []), ...photos.map((p) => tomb("photos", p.id, a.site, a.id)), tomb("assets", a.id, a.site)]);
     S.selected = null; closePanel(); render();
   };
 }
@@ -583,7 +694,7 @@ function openList() {
   const paths = sitePaths().sort((a, b) => a.data.name.localeCompare(b.data.name));
   openPanel(`<h2>Pins &amp; routes <button class="close" data-close>✕</button></h2>
     <input id="l-q" placeholder="Search…">
-    <h3>Pins (${assets.length})</h3><div id="l-pins">${assets.map((a) => `<div class="list-item" data-a="${esc(a.id)}"><span class="pin" style="display:inline-block;width:20px;height:20px;line-height:17px;font-size:10px;background:${(ASSET_TYPES[a.data.type] || ASSET_TYPES.OTHER).color}">${esc((ASSET_TYPES[a.data.type] || ASSET_TYPES.OTHER).glyph)}</span> ${esc(a.data.name)} <span class="muted small">${esc((ASSET_TYPES[a.data.type] || ASSET_TYPES.OTHER).label)}</span></div>`).join("")}</div>
+    <h3>Pins (${assets.length})</h3><div id="l-pins">${assets.map((a) => `<div class="list-item" data-a="${esc(a.id)}"><span class="pin" style="display:inline-block;width:20px;height:20px;line-height:17px;font-size:10px;background:${(ASSET_TYPES[a.data.type] || ASSET_TYPES.OTHER).color}">${esc((ASSET_TYPES[a.data.type] || ASSET_TYPES.OTHER).glyph)}</span> ${esc(a.data.name)} <span class="muted small">${esc((ASSET_TYPES[a.data.type] || ASSET_TYPES.OTHER).label)}${locationOf(a) ? " • in " + esc(locationOf(a).data.name) : ""}</span></div>`).join("")}</div>
     <h3>Routes (${paths.length})</h3><div id="l-paths">${paths.map((p) => `<div class="list-item" data-p="${esc(p.id)}">${esc(p.data.name)} <span class="muted small">${esc((PATH_KINDS[p.data.kind] || {}).label || "")} • ${fmtDist(pathLength(decodePoints(p.data.points)))}</span></div>`).join("")}</div>`);
   panel().querySelectorAll("[data-a]").forEach((el) => (el.onclick = () => { const a = S.assets.get(el.dataset.a); map.setView([a.data.lat, a.data.lon], Math.max(map.getZoom(), 18)); select("assets", a.id); }));
   panel().querySelectorAll("[data-p]").forEach((el) => (el.onclick = () => { const p = S.paths.get(el.dataset.p); const pts = decodePoints(p.data.points); if (pts.length) map.fitBounds(pts, { maxZoom: 19 }); select("paths", p.id); }));
@@ -637,6 +748,34 @@ function openFilter() {
   $("#w-bssid-add").onclick = () => parseMacs($("#w-bssid").value).forEach((m) => add("bssids", m));
   $("#w-noname").onchange = () => save({ ...f, noName: $("#w-noname").checked });
   panel().querySelectorAll("[data-rm]").forEach((b) => (b.onclick = () => save({ ...f, [b.dataset.rm]: (f[b.dataset.rm] || []).filter((x) => x !== b.dataset.v) })));
+}
+
+function stackedPins() {
+  const lone = siteAssets().filter((a) => !isLoc(a) && !locationOf(a));
+  const parent = lone.map((_, i) => i);
+  const find = (i) => { while (parent[i] !== i) i = parent[i]; return i; };
+  for (let i = 0; i < lone.length; i++) for (let j = i + 1; j < lone.length; j++) {
+    if (distanceM([lone[i].data.lat, lone[i].data.lon], [lone[j].data.lat, lone[j].data.lon]) <= GROUP_RADIUS_M) parent[find(i)] = find(j);
+  }
+  const groups = new Map();
+  lone.forEach((a, i) => { const r = find(i); groups.set(r, [...(groups.get(r) || []), a]); });
+  return [...groups.values()].filter((g) => g.length > 1).sort((x, y) => y.length - x.length);
+}
+function openCombine() {
+  const clusters = stackedPins();
+  openPanel(`<h2>Combine stacked pins <button class="close" data-close>✕</button></h2>
+    <p class="muted small">${clusters.length ? "These pins are within a few metres of each other. Combine each group into one location pin." : "No pins within a few metres of each other in this site."}</p>
+    ${clusters.map((c, i) => `<div class="card stack">${c.map((a) => `<div><span class="pin mini" style="background:${typeOf(a).color}">${esc(typeOf(a).glyph)}</span> ${esc(a.data.name)}</div>`).join("")}
+      <label>Location name <input data-stack-name="${i}" placeholder="e.g. IDF-2 closet"></label>
+      <button class="primary" data-stack="${i}">Combine ${c.length} pins</button></div>`).join("")}`);
+  panel().querySelectorAll("[data-stack]").forEach((b) => (b.onclick = async () => {
+    const pins = clusters[Number(b.dataset.stack)];
+    const anchor = pins.reduce((best, p) => ((p.data.acc ?? Infinity) < (best.data.acc ?? Infinity) ? p : best), pins[0]);
+    const locCh = newLocation(anchor, anchor.site, panel().querySelector(`[data-stack-name="${b.dataset.stack}"]`).value);
+    const loc = { id: locCh.id, data: locCh.data };
+    await push([locCh, ...pins.map((p) => joinChange(p, loc))]);
+    openCombine();
+  }));
 }
 
 async function openDevices() {
@@ -731,7 +870,7 @@ function exportGeoJson() {
   const s = S.sites.get(S.site);
   const features = [
     ...siteAssets().map((a) => ({ type: "Feature", geometry: { type: "Point", coordinates: [a.data.lon, a.data.lat] },
-      properties: { id: a.id, featureType: "asset", siteName: s?.data.name, ...a.data, typeLabel: (ASSET_TYPES[a.data.type] || {}).label } })),
+      properties: { id: a.id, featureType: "asset", siteName: s?.data.name, ...a.data, typeLabel: (ASSET_TYPES[a.data.type] || {}).label, locationName: locationOf(a)?.data.name || "" } })),
     ...sitePaths().map((p) => ({ type: "Feature", geometry: { type: "LineString", coordinates: decodePoints(p.data.points).map(([la, lo]) => [lo, la]) },
       properties: { id: p.id, featureType: "path", siteName: s?.data.name, ...p.data, points: undefined, lengthM: pathLength(decodePoints(p.data.points)) } })),
   ];
@@ -804,6 +943,7 @@ window.addEventListener("DOMContentLoaded", () => {
       else if (a === "apnames") openApNames();
       else if (a === "filter") openFilter();
       else if (a === "devices") await openDevices();
+      else if (a === "combine") openCombine();
       else if (a === "export-geojson") exportGeoJson();
       else if (a === "export-csv") await exportCsv();
       else if (a === "logout") { localStorage.removeItem("nm.key"); sessionStorage.removeItem("nm.key"); location.reload(); }

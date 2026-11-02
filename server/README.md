@@ -92,6 +92,11 @@ the same access key (`SYNC_KEY`). Give the browser a name, such as "Office PC", 
 - **Wi-Fi heatmap:** pick *strongest signal*, a single BSSID, or a pin (shows only that AP's radios).
 - **Pins:** **＋ Pin**, then click the map. Click a pin to edit its type, name, status, details, coverage pattern
   and notes, add photos (HEIC photos are converted to JPEG), or delete it. **Move pin** lets you drag it.
+- **Locations (closets / racks):** several devices in one place show as a single pin with a chip per device type
+  (e.g. `R` `W×2` `A`) and the location's name. Dropping or moving a pin within about 6 m of another one offers to
+  add it to that location, or to create a new named location with it. Click the location to see its devices, add one,
+  or move them all together. Open a device to take it out again. **☰ → Combine stacked pins** fixes pins already
+  sitting on top of each other.
 - **Routes:** **〰 Route**, choose the kind, then click the map. Clicking a pin snaps the route to it. Drag
   points to move them, and right-click (or Alt-click) a point to remove it. Then click **Finish**. **Edit / extend
   route** changes an existing route the same way.
