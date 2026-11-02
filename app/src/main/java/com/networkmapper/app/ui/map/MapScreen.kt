@@ -122,6 +122,7 @@ import com.networkmapper.app.ui.components.PhotoStrip
 import com.networkmapper.app.ui.components.TypeBadge
 import com.networkmapper.app.ui.components.rememberPhotoCapture
 import com.networkmapper.app.util.Geo
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -170,6 +171,7 @@ fun MapScreen(
     val currentSite by vm.currentSite.collectAsStateWithLifecycle()
     val unifiLive by vm.unifiLive.collectAsStateWithLifecycle()
     val heatFilter by vm.heatFilter.collectAsStateWithLifecycle()
+    val heatBand by vm.heatBand.collectAsStateWithLifecycle()
     val coverage by vm.coverage.collectAsStateWithLifecycle()
     val spot by vm.spotInfo.collectAsStateWithLifecycle()
     val apNames by vm.apNames.collectAsStateWithLifecycle()
@@ -444,7 +446,7 @@ fun MapScreen(
                     val legendLabel = (heatFilter as? HeatFilter.Bssid)?.let { f ->
                         "AP: ${apNames[f.bssid] ?: f.ssid.ifEmpty { "(hidden)" }}"
                     } ?: heatFilter.label
-                    HeatLegend(legendLabel, heat.size, coverage, onClear = vm::clearHeatmap)
+                    HeatLegend(legendLabel, heat.size, coverage, onClear = vm::clearHeatmap, band = heatBand, onBand = { vm.heatBand.value = it })
                 }
             }
 
@@ -796,7 +798,14 @@ private fun GpsChip(location: Location?, hasPermission: Boolean, onRequestPermis
 }
 
 @Composable
-private fun HeatLegend(label: String, spots: Int, coverage: CoverageStats?, onClear: () -> Unit) {
+private fun HeatLegend(
+    label: String,
+    spots: Int,
+    coverage: CoverageStats?,
+    onClear: () -> Unit,
+    band: com.networkmapper.app.ui.HeatBand,
+    onBand: (com.networkmapper.app.ui.HeatBand) -> Unit,
+) {
     Surface(shape = RoundedCornerShape(8.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f), shadowElevation = 3.dp) {
         Column(Modifier.padding(start = 8.dp, top = 2.dp, bottom = 8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -811,6 +820,18 @@ private fun HeatLegend(label: String, spots: Int, coverage: CoverageStats?, onCl
                 IconButton(onClick = onClear, modifier = Modifier.size(32.dp)) {
                     Icon(Icons.Default.Close, "Hide heatmap", Modifier.size(16.dp))
                 }
+            }
+            // Band toggle: All / 2.4 / 5 / 6 GHz.
+            Row(Modifier.padding(end = 8.dp, bottom = 2.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                com.networkmapper.app.ui.HeatBand.entries.forEach { b ->
+                    FilterChip(
+                        selected = band == b,
+                        onClick = { onBand(b) },
+                        label = { Text(b.label.removeSuffix(" GHz"), style = MaterialTheme.typography.labelSmall) },
+                        modifier = Modifier.height(28.dp),
+                    )
+                }
+                Text("GHz", style = MaterialTheme.typography.labelSmall, modifier = Modifier.align(Alignment.CenterVertically))
             }
             if (coverage != null) {
                 Text(

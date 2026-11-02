@@ -104,6 +104,16 @@ data class GroupOffer(val target: Asset, val distanceM: Double) {
     val joinsExisting: Boolean get() = target.isLocation
 }
 
+/** Which Wi-Fi band the heatmap shows. */
+enum class HeatBand(val label: String) {
+    ALL("All"), GHZ_2_4("2.4 GHz"), GHZ_5("5 GHz"), GHZ_6("6 GHz");
+
+    fun includes(frequencyMhz: Int): Boolean = when (this) {
+        ALL -> true
+        else -> Wifi.band(frequencyMhz) == label
+    }
+}
+
 /** Which end of the route new points (taps, GPS points, auto-track) are added to. */
 enum class DraftEnd { END, START }
 
@@ -1222,6 +1232,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------- Wi-Fi heatmap ----------
     val heatFilter = MutableStateFlow<HeatFilter>(HeatFilter.Strongest)
+    /** 2.4 / 5 / 6 GHz (or all) for the heatmap. */
+    val heatBand = MutableStateFlow(HeatBand.ALL)
     val heatSession = MutableStateFlow<Long?>(null)
 
     val heatPoints: StateFlow<List<HeatPoint>> = settings
@@ -1233,8 +1245,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             } else {
                 val readings = combine(currentSiteId, heatSession) { site, session -> site to session }
                     .flatMapLatest { (site, session) -> repo.readings(site, session) }
-                combine(readings, heatFilter, wifiFilter) { readings, filter, wf ->
-                    toHeatPoints(readings, filter, wf)
+                combine(readings, heatFilter, wifiFilter, heatBand) { readings, filter, wf, band ->
+                    toHeatPoints(readings.filter { band.includes(it.frequency) }, filter, wf)
                 }
             }
         }

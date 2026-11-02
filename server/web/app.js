@@ -54,6 +54,8 @@ function distanceM(a, b) {
 }
 const pathLength = (pts) => pts.slice(1).reduce((s, p, i) => s + distanceM(pts[i], p), 0);
 const fmtDist = (m) => (m < 1000 ? `${Math.round(m)} m (${Math.round(m * 3.28084)} ft)` : `${(m / 1000).toFixed(2)} km (${(m / 1609.344).toFixed(2)} mi)`);
+/** "2.4", "5" or "6" (GHz) for a Wi-Fi frequency in MHz. */
+const bandOf = (mhz) => (mhz < 3000 ? "2.4" : mhz < 5925 ? "5" : mhz < 7200 ? "6" : "60");
 function rssiColor(r) {
   if (r >= -50) return "#1b9e3e"; if (r >= -60) return "#7cb342"; if (r >= -67) return "#fdd835";
   if (r >= -75) return "#fb8c00"; if (r >= -85) return "#e53935"; return "#8e0000";
@@ -1040,6 +1042,9 @@ async function refreshHeat() {
   $("#status").textContent = "Loading Wi-Fi survey…";
   let readings;
   try { readings = await loadReadings(S.site); } catch (e) { $("#status").textContent = e.message; return; }
+  // Only the chosen band (2.4 / 5 / 6 GHz), for the dots, the average surface and the AP list.
+  const band = $("#band-select").value;
+  if (band) readings = readings.filter((r) => bandOf(r.freq) === band);
   let subset;
   if (v === "*") subset = readings.filter((r) => filterAllows(r.ssid, r.bssid));
   else if (v.startsWith("dev:")) {
@@ -1207,6 +1212,7 @@ window.addEventListener("DOMContentLoaded", () => {
   };
   ["#chk-pins", "#chk-paths", "#chk-patterns"].forEach((s) => ($(s).onchange = render));
   $("#chk-surface").onchange = refreshHeat;
+  $("#band-select").onchange = refreshHeat;
   $("#heat-select").onchange = refreshHeat;
   $("#site-select").onchange = () => { S.site = $("#site-select").value; localStorage.setItem("nm.site", S.site); S.selected = null; closePanel(); render(); openSiteView(); refreshHeat(); };
   const toggle = (id) => $(id).classList.toggle("hidden");
