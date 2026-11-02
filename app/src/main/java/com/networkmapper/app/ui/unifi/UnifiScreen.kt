@@ -74,8 +74,9 @@ class UnifiViewModel(app: Application) : AndroidViewModel(app) {
 
     var url by mutableStateOf(saved.url)
     var useApiKey by mutableStateOf(saved.useApiKey)
-    /** UniFi cloud (api.ui.com) instead of the console's own address. */
+    /** Which tab is shown: UniFi cloud (api.ui.com) or the console's own address. Both can be set up. */
     var cloud by mutableStateOf(saved.cloud)
+    var cloudKey by mutableStateOf(saved.cloudKey)
     var username by mutableStateOf(saved.username)
     var secret by mutableStateOf(saved.secret)
     var remember by mutableStateOf(saved.remember)
@@ -96,7 +97,7 @@ class UnifiViewModel(app: Application) : AndroidViewModel(app) {
         get() = if (useApiKey) UnifiAuth.ApiKey(secret.trim()) else UnifiAuth.Login(username.trim(), secret)
 
     val canConnect: Boolean
-        get() = secret.isNotBlank() && (cloud || (url.isNotBlank() && (useApiKey || username.isNotBlank())))
+        get() = if (cloud) cloudKey.isNotBlank() else url.isNotBlank() && secret.isNotBlank() && (useApiKey || username.isNotBlank())
 
     private var savedSite: UnifiSite? = saved.siteRef.takeIf { it.isNotBlank() }?.let {
         UnifiSite(saved.siteId.ifBlank { null }, it, saved.siteName)
@@ -115,6 +116,7 @@ class UnifiViewModel(app: Application) : AndroidViewModel(app) {
             siteId = savedSite?.id ?: "",
             siteName = savedSite?.name ?: "",
             cloud = cloud,
+            cloudKey = cloudKey,
         ),
     )
 
@@ -155,12 +157,11 @@ class UnifiViewModel(app: Application) : AndroidViewModel(app) {
         sites = emptyList()
         viewModelScope.launch {
             try {
-                val list = com.networkmapper.app.unifi.UnifiCloudClient(secret).devices()
+                val list = com.networkmapper.app.unifi.UnifiCloudClient(cloudKey).devices()
                     .map { it.toUnifiDevice() }
                     .sortedWith(compareBy({ kindOrder(it.kind) }, { it.displayName.lowercase() }))
                 devices = list
                 selected = list.map { it.mac }.toSet()
-                savedSite = UnifiSite(null, "cloud", "UniFi cloud")
                 persist()
                 if (list.isEmpty()) error = "Connected, but the UniFi cloud returned no devices for this account."
             } catch (e: Exception) {
@@ -212,6 +213,7 @@ class UnifiViewModel(app: Application) : AndroidViewModel(app) {
     fun forget() {
         store.forget()
         secret = ""
+        cloudKey = ""
         pin = null
         pinFor = null
         sites = emptyList()
@@ -289,7 +291,9 @@ fun UnifiScreen(mainVm: MainViewModel, onBack: () -> Unit, vm: UnifiViewModel = 
                                 "Uses Ubiquiti's cloud (api.ui.com), so it works anywhere with internet – no VPN. " +
                                     "Create a key at unifi.ui.com → API (as the console owner or a super admin). " +
                                     "Gives device names, models, IPs, MACs, online status, firmware and uptime. AP radio " +
-                                    "BSSIDs, clients and port details need the direct console connection.",
+                                    "BSSIDs, clients, ports and uplinks need the direct console connection.\n\n" +
+                                    "Set up both to get the best of each: the app uses the console whenever it can reach " +
+                                    "it, and the cloud when it can't (e.g. off the VPN).",
                                 style = MaterialTheme.typography.bodySmall,
                             )
                         } else {
@@ -342,8 +346,8 @@ fun UnifiScreen(mainVm: MainViewModel, onBack: () -> Unit, vm: UnifiViewModel = 
                             }
                         }
                         OutlinedTextField(
-                            value = vm.secret,
-                            onValueChange = { vm.secret = it },
+                            value = if (vm.cloud) vm.cloudKey else vm.secret,
+                            onValueChange = { if (vm.cloud) vm.cloudKey = it else vm.secret = it },
                             label = { Text(if (vm.cloud) "UniFi cloud API key" else if (vm.useApiKey) "API key" else "Password") },
                             singleLine = true,
                             visualTransformation = PasswordVisualTransformation(),

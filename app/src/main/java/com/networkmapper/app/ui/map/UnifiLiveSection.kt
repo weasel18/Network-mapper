@@ -4,6 +4,7 @@ package com.networkmapper.app.ui.map
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -43,7 +44,13 @@ import java.util.Locale
 
 /** Live controller status shown on a UniFi-matched pin's card. */
 @Composable
-fun UnifiLiveSection(state: MainViewModel.LiveState, onRefresh: () -> Unit) {
+fun UnifiLiveSection(
+    state: MainViewModel.LiveState,
+    onRefresh: () -> Unit,
+    uplink: MainViewModel.UnifiLink? = null,
+    downlinks: List<MainViewModel.UnifiLink> = emptyList(),
+    onJump: (com.networkmapper.app.data.Asset) -> Unit = {},
+) {
     val live: UnifiLive? = when (state) {
         is MainViewModel.LiveState.Ok -> state.live
         is MainViewModel.LiveState.Failed -> state.last
@@ -83,6 +90,12 @@ fun UnifiLiveSection(state: MainViewModel.LiveState, onRefresh: () -> Unit) {
         if (state is MainViewModel.LiveState.Failed) {
             Text(state.message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
         }
+        // Where it's plugged in, and what's plugged into it: tap one that's on the map to jump to its pin.
+        uplink?.let { LinkRow("↑ Uplink: ${it.name}" + (it.port?.let { p -> " · port $p" } ?: ""), it.pin, onJump) }
+        if (downlinks.isNotEmpty()) {
+            Text("Plugged in here", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
+            downlinks.forEach { d -> LinkRow((d.port?.let { "Port $it → " } ?: "→ ") + d.name, d.pin, onJump) }
+        }
         if (live == null) return@Column
 
         Column(
@@ -102,7 +115,7 @@ fun UnifiLiveSection(state: MainViewModel.LiveState, onRefresh: () -> Unit) {
                 style = small,
             )
             val traffic = listOfNotNull(
-                live.uplink?.let { "Uplink $it" },
+                live.uplink?.let { "Link $it" },
                 live.txBps?.let { "↑ ${UnifiLiveParser.formatRate(it)}" },
                 live.rxBps?.let { "↓ ${UnifiLiveParser.formatRate(it)}" },
             )
@@ -137,8 +150,30 @@ fun UnifiLiveSection(state: MainViewModel.LiveState, onRefresh: () -> Unit) {
                     live.ports.forEach { PortChip(it) }
                 }
             }
-            Text("Updated ${Fmt.dateTime(live.fetchedAt).substringAfter(' ')} • refreshes every 10 s", style = MaterialTheme.typography.labelSmall)
+            Text(
+                "Updated ${Fmt.dateTime(live.fetchedAt).substringAfter(' ')} • via ${live.via}" +
+                    if (live.via == "console") " • every 10 s" else " • every 30 s",
+                style = MaterialTheme.typography.labelSmall,
+            )
         }
+    }
+}
+
+/** One linked device; underlined and tappable when it has a pin on the map. */
+@Composable
+private fun LinkRow(text: String, pin: com.networkmapper.app.data.Asset?, onJump: (com.networkmapper.app.data.Asset) -> Unit) {
+    if (pin != null) {
+        Text(
+            text,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.primary,
+            textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline,
+            modifier = Modifier
+                .clickable { onJump(pin) }
+                .padding(vertical = 3.dp),
+        )
+    } else {
+        Text("$text (not on the map)", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(vertical = 3.dp))
     }
 }
 

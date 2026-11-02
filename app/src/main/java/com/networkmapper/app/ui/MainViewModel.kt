@@ -697,11 +697,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             return "Sign in on the UniFi screen (with “Remember” ticked) and load devices once."
         }
         return try {
-            val list = if (settings.cloud) {
-                com.networkmapper.app.unifi.UnifiCloudClient(settings.secret).devices().map { it.toUnifiDevice() }
+            // The console has the most detail; the cloud is the fallback when it can't be reached.
+            val list = if (settings.consoleReady) {
+                try {
+                    val (client, auth, site) = unifiSession(settings)
+                    client.devices(auth, site)
+                } catch (e: java.io.IOException) {
+                    if (!settings.cloudReady || !isUnreachable(e)) throw e
+                    com.networkmapper.app.unifi.UnifiCloudClient(settings.cloudKey).devices().map { it.toUnifiDevice() }
+                }
             } else {
-                val (client, auth, site) = unifiSession(settings)
-                client.devices(auth, site)
+                com.networkmapper.app.unifi.UnifiCloudClient(settings.cloudKey).devices().map { it.toUnifiDevice() }
             }
             unifiDevices.value = withContext(Dispatchers.IO) {
                 unifiStore.saveDevices(list)
@@ -753,11 +759,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 )
                 return@launch
             }
-            if (settings.cloud) return@launch pollCloud(device, settings.secret)
+            if (!settings.consoleReady) return@launch pollCloud(device, settings.cloudKey)
             val (client, auth, site) = unifiSession(settings)
             var last = (unifiLive.value as? LiveState.Ok)?.takeIf { it.device.mac == device.mac }?.live
             if (last == null) unifiLive.value = LiveState.Loading(device)
             while (isActive) {
+                var wait = 10_000L
                 try {
                     val live = client.liveDevice(auth, site, device.mac, device.id)
                     last = live
@@ -768,16 +775,63 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    val msg = when (e) {
-                        is java.net.UnknownHostException, is java.net.ConnectException, is java.net.SocketTimeoutException ->
-                            "Can't reach the controller (are you on its network / VPN?)"
-                        else -> e.message ?: e.javaClass.simpleName
+                    // Console out of reach (e.g. off the VPN): use the UniFi cloud's basic status if it's set up.
+                    val cloud = if (settings.cloudReady && isUnreachable(e)) cloudLive(device, settings.cloudKey) else null
+                    if (cloud != null) {
+                        last = cloud
+                        unifiLive.value = LiveState.Ok(device, cloud)
+                        wait = 30_000L
+                    } else {
+                        val msg = when {
+                            isUnreachable(e) -> "Can't reach the controller (are you on its network / VPN?)" +
+                                if (!settings.cloudReady) " – add a UniFi cloud key to see basic status anywhere." else ""
+                            else -> e.message ?: e.javaClass.simpleName
+                        }
+                        unifiLive.value = LiveState.Failed(device, msg, last)
                     }
-                    unifiLive.value = LiveState.Failed(device, msg, last)
                 }
-                delay(10_000)
+                delay(wait)
             }
         }
+    }
+
+    /** A UniFi device linked to a pin's device (its uplink, or plugged into it), with its pin if it's on the map. */
+    data class UnifiLink(val name: String, val port: Int?, val pin: Asset?)
+
+    private fun pinFor(device: UnifiDevice?, mac: String): Asset? =
+        device?.let { d -> assets.value.firstOrNull { UnifiMatch.matches(it, d) } }
+            ?: assets.value.firstOrNull { mac in UnifiMatch.pinMacs(it) }
+
+    /** What [asset]'s device is plugged into (live data first, else what the last device import said). */
+    fun unifiUplink(asset: Asset, live: UnifiLive?): UnifiLink? {
+        val devices = unifiDevices.value
+        val me = devices.firstOrNull { UnifiMatch.matches(asset, it) } ?: return null
+        val upMac = live?.uplinkMac?.takeIf { it.isNotBlank() } ?: me.uplinkMac.takeIf { it.isNotBlank() } ?: return null
+        val up = devices.firstOrNull { it.mac == upMac }
+        return UnifiLink(up?.displayName ?: live?.uplinkName ?: upMac, live?.uplinkPort ?: me.uplinkPort, pinFor(up, upMac))
+    }
+
+    /** Devices plugged into [asset]'s device, by its port number. */
+    fun unifiDownlinks(asset: Asset): List<UnifiLink> {
+        val devices = unifiDevices.value
+        val me = devices.firstOrNull { UnifiMatch.matches(asset, it) } ?: return emptyList()
+        return devices.filter { it.uplinkMac == me.mac && it.mac != me.mac }
+            .sortedWith(compareBy({ it.uplinkPort ?: Int.MAX_VALUE }, { it.displayName.lowercase() }))
+            .map { d -> UnifiLink(d.displayName, d.uplinkPort, pinFor(d, d.mac)) }
+    }
+
+    private fun isUnreachable(e: Throwable): Boolean =
+        e is java.net.UnknownHostException || e is java.net.ConnectException || e is java.net.SocketTimeoutException ||
+            e is java.net.NoRouteToHostException || e is javax.net.ssl.SSLException && e.cause is java.net.SocketException
+
+    /** One cloud lookup for [device] (null if the cloud can't help). */
+    private suspend fun cloudLive(device: UnifiDevice, key: String): UnifiLive? = try {
+        com.networkmapper.app.unifi.UnifiCloudClient(key).devices().firstOrNull { it.mac == device.mac.lowercase() }
+            ?.toLive()?.copy(via = "UniFi cloud – console not reachable")
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        null
     }
 
     /** Live status from the UniFi cloud: device-level only (online, firmware, uptime, IP), every 30 s. */

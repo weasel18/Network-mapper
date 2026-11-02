@@ -99,7 +99,7 @@ class UnifiClient(baseUrl: String, private val pinnedFingerprint: String?) {
                 } catch (e: IOException) {
                     emptyList()
                 }
-                UnifiParser.mergeRadios(all, classic)
+                UnifiParser.resolveUplinks(UnifiParser.mergeRadios(all, classic))
             }
             is UnifiAuth.Login -> {
                 if (cookies.isEmpty()) login(auth)

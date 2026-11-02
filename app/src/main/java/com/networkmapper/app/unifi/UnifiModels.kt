@@ -24,6 +24,11 @@ data class UnifiDevice(
     val portCount: Int? = null,
     val firmware: String = "",
     val serial: String = "",
+    /** The device this one is plugged into (its MAC), and that device's port, when the console reports it. */
+    val uplinkMac: String = "",
+    val uplinkPort: Int? = null,
+    /** Integration-API id of the uplink device (resolved to [uplinkMac] after import). */
+    val uplinkDeviceId: String = "",
 ) {
     /** Every MAC this device can show up as: its own MAC plus each radio BSSID. */
     val allMacs: Set<String> get() = (listOf(mac) + radios.map { it.bssid }).filter { it.isNotBlank() }.toSet()
@@ -78,6 +83,7 @@ object UnifiParser {
                 )
             }.distinctBy { it.bssid }
             val type = d.optString("type")
+            val up = d.optJSONObject("uplink")
             UnifiDevice(
                 mac = m,
                 name = d.optString("name"),
@@ -88,6 +94,8 @@ object UnifiParser {
                 portCount = d.optJSONArray("port_table")?.length()?.takeIf { it > 0 },
                 firmware = d.optString("version"),
                 serial = d.optString("serial"),
+                uplinkMac = mac(up?.optString("uplink_mac")),
+                uplinkPort = up?.takeIf { it.has("uplink_remote_port") }?.optInt("uplink_remote_port")?.takeIf { it > 0 },
             )
         }
     }
@@ -114,9 +122,18 @@ object UnifiParser {
                 ip = d.optString("ipAddress"),
                 id = d.optString("id"),
                 firmware = d.optString("firmwareVersion"),
+                uplinkDeviceId = d.optJSONObject("uplink")?.optString("deviceId").orEmpty(),
             )
         }
         return devices to root.optInt("totalCount", devices.size)
+    }
+
+    /** Fills in [UnifiDevice.uplinkMac] from integration-API uplink ids. */
+    fun resolveUplinks(devices: List<UnifiDevice>): List<UnifiDevice> {
+        val macById = devices.filter { it.id.isNotBlank() }.associate { it.id to it.mac }
+        return devices.map { d ->
+            if (d.uplinkMac.isBlank() && d.uplinkDeviceId.isNotBlank()) d.copy(uplinkMac = macById[d.uplinkDeviceId].orEmpty()) else d
+        }
     }
 
     /** Integration API sites: {"data":[{id,internalReference,name}]} */
@@ -149,6 +166,8 @@ object UnifiParser {
                     portCount = d.portCount ?: c.portCount,
                     firmware = d.firmware.ifBlank { c.firmware },
                     serial = d.serial.ifBlank { c.serial },
+                    uplinkMac = d.uplinkMac.ifBlank { c.uplinkMac },
+                    uplinkPort = d.uplinkPort ?: c.uplinkPort,
                 )
             } ?: d
         }
@@ -166,7 +185,8 @@ object UnifiParser {
             arr.put(
                 JSONObject().put("mac", d.mac).put("name", d.name).put("model", d.model).put("kind", d.kind)
                     .put("ip", d.ip).put("id", d.id).put("radios", radios)
-                    .put("ports", d.portCount ?: JSONObject.NULL).put("firmware", d.firmware).put("serial", d.serial),
+                    .put("ports", d.portCount ?: JSONObject.NULL).put("firmware", d.firmware).put("serial", d.serial)
+                    .put("uplinkMac", d.uplinkMac).put("uplinkPort", d.uplinkPort ?: JSONObject.NULL),
             )
         }
         return arr.toString()
@@ -187,6 +207,8 @@ object UnifiParser {
                 portCount = if (o.isNull("ports") || !o.has("ports")) null else o.optInt("ports"),
                 firmware = o.optString("firmware"),
                 serial = o.optString("serial"),
+                uplinkMac = o.optString("uplinkMac"),
+                uplinkPort = if (o.isNull("uplinkPort") || !o.has("uplinkPort")) null else o.optInt("uplinkPort"),
                 radios = (0 until radios.length()).mapNotNull { j ->
                     val r = radios.optJSONObject(j) ?: return@mapNotNull null
                     UnifiRadio(
@@ -241,6 +263,12 @@ data class UnifiLive(
     val radios: List<LiveRadio>,
     val ports: List<LivePort>,
     val fetchedAt: Long = System.currentTimeMillis(),
+    /** The device this one is plugged into, and which of its ports (when reported). */
+    val uplinkMac: String? = null,
+    val uplinkPort: Int? = null,
+    val uplinkName: String? = null,
+    /** Where this came from: "console" or "UniFi cloud". */
+    val via: String = "console",
 )
 
 object UnifiLiveParser {
@@ -336,8 +364,13 @@ object UnifiLiveParser {
             satisfaction = d.num("satisfaction")?.toInt()?.takeIf { it >= 0 },
             radios = radios,
             ports = ports,
+            uplinkMac = uplink?.optString("uplink_mac")?.let { mac(it) }?.takeIf { it.isNotBlank() },
+            uplinkPort = uplink?.num("uplink_remote_port")?.toInt()?.takeIf { it > 0 },
+            uplinkName = uplink?.optString("uplink_device_name")?.takeIf { it.isNotBlank() },
         )
     }
+
+    private fun mac(s: String?): String = s?.let { Wifi.parseBssids(it).firstOrNull() } ?: ""
 
     /**
      * Integration API: GET …/devices/{id} and …/devices/{id}/statistics/latest. Field names are read

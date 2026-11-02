@@ -557,6 +557,16 @@ fun MapScreen(
                         live = unifiLive,
                         onRefreshLive = vm::refreshLive,
                         photos = { PhotoStrip(selPhotos, vm.repo::photoFile, { onOpenPhoto(it.id) }) },
+                        uplink = vm.unifiUplink(
+                            selAsset,
+                            when (val l = unifiLive) {
+                                is MainViewModel.LiveState.Ok -> l.live
+                                is MainViewModel.LiveState.Failed -> l.last
+                                else -> null
+                            },
+                        ),
+                        downlinks = vm.unifiDownlinks(selAsset),
+                        onJump = { vm.focusOnAsset(it) },
                     )
                     selPath != null -> PathCard(
                         path = selPath,
@@ -1129,6 +1139,9 @@ private fun AssetCard(
     live: MainViewModel.LiveState?,
     onRefreshLive: () -> Unit,
     photos: @Composable () -> Unit = {},
+    uplink: MainViewModel.UnifiLink? = null,
+    downlinks: List<MainViewModel.UnifiLink> = emptyList(),
+    onJump: (Asset) -> Unit = {},
 ) {
     Card(Modifier.fillMaxWidth(), elevation = CardDefaults.cardElevation(6.dp)) {
         Column(Modifier.padding(12.dp)) {
@@ -1215,7 +1228,7 @@ private fun AssetCard(
                 }
             }
             // Live status from the UniFi controller when this pin matches an imported device.
-            if (live != null) UnifiLiveSection(live, onRefreshLive)
+            if (live != null) UnifiLiveSection(live, onRefreshLive, uplink, downlinks, onJump)
         }
     }
 }

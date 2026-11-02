@@ -60,6 +60,7 @@ data class CloudDevice(
         satisfaction = null,
         radios = emptyList(),
         ports = emptyList(),
+        via = "UniFi cloud",
     )
 
     private fun startedAgoSec(): Long? = try {
