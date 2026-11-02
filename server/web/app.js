@@ -664,40 +664,74 @@ async function heifToJpeg(blob) {
   return (await loadHeicLib())({ blob, type: "image/jpeg", quality: 0.88 });
 }
 
+/** A displayable object URL for a photo (downloaded once; HEIC converted). */
+async function photoUrl(id) {
+  if (!S.photoUrls.has(id)) {
+    let blob = await api("GET", `/api/photos/${encodeURIComponent(id)}`, undefined, "blob");
+    if (await isHeif(blob)) blob = await heifToJpeg(blob); // older uploads saved as HEIC
+    S.photoUrls.set(id, URL.createObjectURL(blob));
+  }
+  return S.photoUrls.get(id);
+}
 async function loadPhotoThumbs() {
   for (const img of panel().querySelectorAll("img[data-photo]")) {
     const id = img.dataset.photo;
+    img.onclick = () => openLightbox(id);
     try {
-      if (!S.photoUrls.has(id)) {
-        let blob = await api("GET", `/api/photos/${encodeURIComponent(id)}`, undefined, "blob");
-        if (await isHeif(blob)) blob = await heifToJpeg(blob); // older uploads saved as HEIC
-        S.photoUrls.set(id, URL.createObjectURL(blob));
-      }
-      img.src = S.photoUrls.get(id);
-      img.onclick = () => openLightbox(id, img.src);
+      img.src = await photoUrl(id);
     } catch (e) { img.alt = "can't show photo"; img.title = e.message || ""; }
   }
 }
-function openLightbox(id, src) {
-  const p = S.photos.get(id);
-  const info = [p?.data.caption, p?.data.takenAt ? fmtTime(p.data.takenAt) : "", p?.by ? "by " + p.by : ""].filter(Boolean).join(" • ");
+/** Full-size photo viewer for the photos in the open panel: ‹ › buttons, arrow keys or swipe to move between them. */
+function openLightbox(id) {
+  const ids = [...panel().querySelectorAll("img[data-photo]")].map((i) => i.dataset.photo);
+  let at = Math.max(0, ids.indexOf(id));
   const lb = document.createElement("div");
   lb.className = "lightbox";
-  lb.innerHTML = `<img src="${src}" alt="">
-    <div class="lb-bar"><span>${esc(info)}</span><button class="danger" data-lb="delete">Delete photo</button><button data-lb="close">Close</button></div>`;
-  lb.onclick = (e) => { if (e.target === lb || e.target.tagName === "IMG" || e.target.dataset.lb === "close") lb.remove(); };
+  lb.innerHTML = `<img alt="">
+    ${ids.length > 1 ? '<button class="lb-nav lb-prev" data-lb="prev" aria-label="Previous photo">‹</button><button class="lb-nav lb-next" data-lb="next" aria-label="Next photo">›</button>' : ""}
+    <div class="lb-bar"><span class="lb-info"></span><button class="danger" data-lb="delete">Delete photo</button><button data-lb="close">Close</button></div>`;
+  const img = lb.querySelector("img");
+  const show = async (i) => {
+    at = (i + ids.length) % ids.length;
+    const pid = ids[at], p = S.photos.get(pid);
+    const info = [ids.length > 1 ? `${at + 1} / ${ids.length}` : "", p?.data.caption, p?.data.takenAt ? fmtTime(p.data.takenAt) : "", p?.by ? "by " + p.by : ""].filter(Boolean).join(" • ");
+    lb.querySelector(".lb-info").textContent = info;
+    try { img.src = await photoUrl(pid); } catch (e) { img.removeAttribute("src"); img.alt = "can't show photo"; }
+  };
+  const close = () => { lb.remove(); document.removeEventListener("keydown", keys); };
+  const keys = (e) => { if (e.key === "ArrowLeft") show(at - 1); else if (e.key === "ArrowRight") show(at + 1); else if (e.key === "Escape") close(); };
+  document.addEventListener("keydown", keys);
+  lb.onclick = (e) => {
+    const a = e.target.dataset.lb;
+    if (a === "prev") show(at - 1);
+    else if (a === "next") show(at + 1);
+    else if (e.target === lb || a === "close") close();
+  };
+  // Swipe on touch screens.
+  let x0 = null;
+  lb.addEventListener("touchstart", (e) => { x0 = e.touches.length === 1 ? e.touches[0].clientX : null; }, { passive: true });
+  lb.addEventListener("touchend", (e) => {
+    if (x0 === null || ids.length < 2) return;
+    const dx = e.changedTouches[0].clientX - x0;
+    if (Math.abs(dx) > 50) show(at + (dx < 0 ? 1 : -1));
+    x0 = null;
+  });
   lb.querySelector("[data-lb=delete]").onclick = async (e) => {
     e.stopPropagation();
+    const pid = ids[at], p = S.photos.get(pid);
     if (!p || !confirm("Delete this photo? It's removed from the server and from every phone on their next sync.")) return;
     try {
-      await push([tomb("photos", id, p.site, p.parent || p.data.asset || p.data.path)]);
-      lb.remove();
-      URL.revokeObjectURL(S.photoUrls.get(id) || "");
-      S.photoUrls.delete(id);
+      await push([tomb("photos", pid, p.site, p.parent || p.data.asset || p.data.path)]);
+      URL.revokeObjectURL(S.photoUrls.get(pid) || "");
+      S.photoUrls.delete(pid);
+      ids.splice(at, 1);
       openDetails();
+      if (!ids.length) close(); else show(at); // stay on the remaining photos
     } catch (err) { alert(err.message); }
   };
   document.body.appendChild(lb);
+  show(at);
 }
 function wirePhotoUpload(ownerKind, owner, site, pos) {
   const input = $("#photo-input");
@@ -1202,8 +1236,8 @@ window.addEventListener("DOMContentLoaded", () => {
   }));
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
-    const lb = document.querySelector(".lightbox");
-    if (lb) lb.remove(); else if (S.mode) cancelMode();
+    if (document.querySelector(".lightbox")) return; // the photo viewer handles its own keys
+    if (S.mode) cancelMode();
   });
 
   const saved = localStorage.getItem("nm.key") || sessionStorage.getItem("nm.key");

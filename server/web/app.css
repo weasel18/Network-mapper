@@ -136,3 +136,7 @@ button.primary.saved { background: #2e7d32; border-color: #2e7d32; color: #fff; 
 h3 button.small { font-size: 12px; padding: 2px 8px; margin-left: 8px; font-weight: normal; }
 
 .heat-surface { position: absolute; left: 0; top: 0; }
+
+.lb-nav { position: fixed; top: 50%; transform: translateY(-50%); width: 48px; height: 64px; font-size: 34px; line-height: 1;
+  background: rgba(0,0,0,.45); color: #fff; border: 0; border-radius: 10px; }
+.lb-prev { left: 12px; } .lb-next { right: 12px; }
