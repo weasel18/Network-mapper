@@ -94,6 +94,25 @@ object Wifi {
         else -> 0xFF8E0000
     }
 
+    private val rampStops = listOf(
+        -50.0 to 0x1B9E3E, -60.0 to 0x7CB342, -67.0 to 0xFDD835, -75.0 to 0xFB8C00, -85.0 to 0xE53935, -95.0 to 0x8E0000,
+    )
+
+    /** Same ramp as [rssiColor] but blended smoothly between its steps (RGB, no alpha) – for the average heat surface. */
+    fun rssiColorSmooth(rssi: Double): Int {
+        if (rssi >= rampStops.first().first) return rampStops.first().second
+        for (i in 1 until rampStops.size) {
+            val (hi, cHi) = rampStops[i - 1]
+            val (lo, cLo) = rampStops[i]
+            if (rssi >= lo) {
+                val t = (hi - rssi) / (hi - lo)
+                fun mix(shift: Int) = (((cHi shr shift) and 0xFF) * (1 - t) + ((cLo shr shift) and 0xFF) * t).toInt()
+                return (mix(16) shl 16) or (mix(8) shl 8) or mix(0)
+            }
+        }
+        return rampStops.last().second
+    }
+
     fun rssiQuality(rssi: Int): String = when {
         rssi >= -50 -> "Excellent"
         rssi >= -60 -> "Good"

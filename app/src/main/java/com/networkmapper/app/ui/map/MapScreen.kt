@@ -118,6 +118,7 @@ import com.networkmapper.app.ui.TileStyle
 import com.networkmapper.app.ui.components.AssetTypePickerDialog
 import com.networkmapper.app.ui.components.KindSwatch
 import com.networkmapper.app.ui.components.PathKindPickerDialog
+import com.networkmapper.app.ui.components.PhotoStrip
 import com.networkmapper.app.ui.components.TypeBadge
 import com.networkmapper.app.ui.components.rememberPhotoCapture
 import com.networkmapper.app.util.Geo
@@ -148,6 +149,7 @@ fun MapScreen(
     onOpenData: () -> Unit,
     onOpenSites: () -> Unit,
     onOpenSync: () -> Unit,
+    onOpenPhoto: (Long) -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -160,6 +162,11 @@ fun MapScreen(
     val location by vm.location.collectAsStateWithLifecycle()
     val selected by vm.selected.collectAsStateWithLifecycle()
     val pinMove by vm.pinMove.collectAsStateWithLifecycle()
+    // Photos of the tapped pin, for the strip on its card.
+    val selAssetId = (selected as? Selection.AssetSel)?.id
+    val selPhotos by remember(selAssetId) {
+        selAssetId?.let { vm.repo.photosForAsset(it) } ?: kotlinx.coroutines.flow.flowOf(emptyList())
+    }.collectAsStateWithLifecycle(emptyList())
     val currentSite by vm.currentSite.collectAsStateWithLifecycle()
     val unifiLive by vm.unifiLive.collectAsStateWithLifecycle()
     val heatFilter by vm.heatFilter.collectAsStateWithLifecycle()
@@ -519,6 +526,7 @@ fun MapScreen(
                         onNavigate = { navigateTo(context, selAsset.latitude, selAsset.longitude, selAsset.name) },
                         onMove = { vm.startPinMove(selAsset) },
                         onClose = { vm.select(null) },
+                        photos = { PhotoStrip(selPhotos, vm.repo::photoFile, { onOpenPhoto(it.id) }) },
                     )
                     selAsset != null -> AssetCard(
                         asset = selAsset,
@@ -546,6 +554,7 @@ fun MapScreen(
                         onMove = { vm.startPinMove(selAsset) },
                         live = unifiLive,
                         onRefreshLive = vm::refreshLive,
+                        photos = { PhotoStrip(selPhotos, vm.repo::photoFile, { onOpenPhoto(it.id) }) },
                     )
                     selPath != null -> PathCard(
                         path = selPath,
@@ -1098,6 +1107,7 @@ private fun AssetCard(
     onMove: () -> Unit,
     live: MainViewModel.LiveState?,
     onRefreshLive: () -> Unit,
+    photos: @Composable () -> Unit = {},
 ) {
     Card(Modifier.fillMaxWidth(), elevation = CardDefaults.cardElevation(6.dp)) {
         Column(Modifier.padding(12.dp)) {
@@ -1131,6 +1141,7 @@ private fun AssetCard(
             if (asset.notes.isNotBlank()) {
                 Text(asset.notes, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
+            photos()
             if (inLocation != null) {
                 TextButton(onClick = { onOpenLocation(inLocation) }) {
                     Text("${AssetType.LOCATION.glyph} In ${inLocation.name} – show all devices there")
@@ -1200,6 +1211,7 @@ private fun LocationCard(
     onNavigate: () -> Unit,
     onMove: () -> Unit,
     onClose: () -> Unit,
+    photos: @Composable () -> Unit = {},
 ) {
     Card(Modifier.fillMaxWidth(), elevation = CardDefaults.cardElevation(6.dp)) {
         Column(Modifier.padding(12.dp)) {
@@ -1228,6 +1240,7 @@ private fun LocationCard(
             if (place.notes.isNotBlank()) {
                 Text(place.notes, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
+            photos()
             Column(
                 Modifier
                     .heightIn(max = 220.dp)
@@ -1445,6 +1458,7 @@ private fun LayersDialog(
                 CheckRow("Pins", settings.showAssets) { onChange(settings.copy(showAssets = it)) }
                 CheckRow("Fiber / link paths", settings.showPaths) { onChange(settings.copy(showPaths = it)) }
                 CheckRow("Wi-Fi signal heatmap", settings.showHeatmap) { onChange(settings.copy(showHeatmap = it)) }
+                CheckRow("   Smooth average colour under the dots", settings.showHeatSurface) { onChange(settings.copy(showHeatSurface = it)) }
                 CheckRow("AP coverage patterns", settings.showPatterns) { onChange(settings.copy(showPatterns = it)) }
                 HorizontalDivider(Modifier.padding(vertical = 6.dp))
                 Text("Pin types", style = MaterialTheme.typography.titleSmall)

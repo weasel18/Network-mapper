@@ -245,6 +245,25 @@ fun rememberGalleryImport(onImported: (File) -> Unit): () -> Unit {
     return { launcher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
 }
 
+/** A pin's photos as a horizontally scrolling row of thumbnails (nothing when there are none). */
+@Composable
+fun PhotoStrip(photos: List<Photo>, fileFor: (Photo) -> File, onOpenPhoto: (Photo) -> Unit, size: Dp = 76.dp) {
+    if (photos.isEmpty()) return
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(vertical = 4.dp)) {
+        items(photos, key = { it.id }) { p ->
+            AsyncImage(
+                model = fileFor(p),
+                contentDescription = p.caption.ifEmpty { "Photo" },
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .size(size)
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { onOpenPhoto(p) },
+            )
+        }
+    }
+}
+
 @Composable
 fun PhotoSection(
     photos: List<Photo>,

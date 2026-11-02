@@ -134,3 +134,5 @@ button.primary.saved { background: #2e7d32; border-color: #2e7d32; color: #fff; 
 .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; }
 .dot.on { background: #2e7d32; } .dot.off { background: #e53935; }
 h3 button.small { font-size: 12px; padding: 2px 8px; margin-left: 8px; font-weight: normal; }
+
+.heat-surface { position: absolute; left: 0; top: 0; }

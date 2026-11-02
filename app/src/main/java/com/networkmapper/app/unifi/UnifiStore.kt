@@ -17,7 +17,12 @@ data class UnifiSettings(
     val siteRef: String = "",
     val siteId: String = "",
     val siteName: String = "",
-)
+    /** Use the UniFi cloud (api.ui.com, Site Manager API key) instead of connecting to the console directly. */
+    val cloud: Boolean = false,
+) {
+    /** Enough is saved to fetch devices and live status without opening the UniFi screen. */
+    val ready: Boolean get() = secret.isNotBlank() && (cloud || (url.isNotBlank() && siteRef.isNotBlank()))
+}
 
 /** Controller settings; the API key / password is encrypted with an Android Keystore key. */
 class UnifiStore(context: Context) {
@@ -36,6 +41,7 @@ class UnifiStore(context: Context) {
         siteRef = prefs.getString("siteRef", "") ?: "",
         siteId = prefs.getString("siteId", "") ?: "",
         siteName = prefs.getString("siteName", "") ?: "",
+        cloud = prefs.getBoolean("cloud", false),
     )
 
     fun save(s: UnifiSettings) {
@@ -50,6 +56,7 @@ class UnifiStore(context: Context) {
             .putString("siteRef", s.siteRef)
             .putString("siteId", s.siteId)
             .putString("siteName", s.siteName)
+            .putBoolean("cloud", s.cloud)
             .apply()
     }
 

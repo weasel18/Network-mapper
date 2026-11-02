@@ -159,6 +159,7 @@ class MapOverlayController(private val context: Context, val mapView: MapView) {
         }
         if (settings.showHeatmap) {
             heat.points = heatPoints
+            heat.showSurface = settings.showHeatSurface
             overlays.add(heat)
         }
         if (settings.showPaths) {
@@ -450,6 +451,9 @@ class PatternOverlay(private val density: Float) : Overlay() {
 /** Draws Wi-Fi survey samples as colour-coded dots. */
 class HeatmapOverlay(private val density: Float, private val onTap: (HeatPoint) -> Boolean) : Overlay() {
     var points: List<HeatPoint> = emptyList()
+    /** Draw the smooth average-signal surface under the dots. */
+    var showSurface: Boolean = true
+    private val surface = HeatSurface(density)
     private val hit = Point()
 
     /** Picks the dot nearest the finger (within ~18 dp). */
@@ -479,6 +483,7 @@ class HeatmapOverlay(private val density: Float, private val onTap: (HeatPoint) 
 
     override fun draw(c: Canvas?, proj: Projection?) {
         if (c == null || proj == null) return
+        if (showSurface) surface.draw(c, proj, points)
         val bb = proj.boundingBox
         val zoom = proj.zoomLevel
         val radius = (if (zoom >= 18) 9f else if (zoom >= 16) 6f else 4f) * density
@@ -722,5 +727,123 @@ object WifiGlyph {
         }
         p.style = Paint.Style.FILL
         c.drawCircle(cx, baseY, size * 0.085f, p)
+    }
+}
+
+/**
+ * Smooth "average signal" colour surface: readings are averaged over a few metres (Gaussian weighting) and
+ * coloured with the signal ramp, fading out where there are no readings. Built once per zoom level as a small
+ * bitmap and stretched while panning / pinching.
+ */
+class HeatSurface(private val density: Float) {
+    private var bmp: Bitmap? = null
+    private var north = 0.0
+    private var west = 0.0
+    private var south = 0.0
+    private var east = 0.0
+    private var forPoints: List<HeatPoint>? = null
+    private var forZoom = -100.0
+    private val paint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
+    private val dst = android.graphics.RectF()
+    private val a = Point()
+    private val b = Point()
+
+    fun draw(c: Canvas, proj: Projection, points: List<HeatPoint>) {
+        if (points.isEmpty()) return
+        val zoom = proj.zoomLevel
+        if (points !== forPoints || abs(zoom - forZoom) >= 0.75) build(proj, points, zoom)
+        val bitmap = bmp ?: return
+        proj.toPixels(GeoPoint(north, west), a)
+        proj.toPixels(GeoPoint(south, east), b)
+        dst.set(a.x.toFloat(), a.y.toFloat(), b.x.toFloat(), b.y.toFloat())
+        c.drawBitmap(bitmap, null, dst, paint)
+    }
+
+    private fun build(proj: Projection, points: List<HeatPoint>, zoom: Double) {
+        forPoints = points
+        forZoom = zoom
+        bmp = null
+        // Pixels per metre at this zoom (measured, so latitude is accounted for).
+        val ref = GeoPt(points[0].lat, points[0].lon)
+        val far = com.networkmapper.app.util.Geo.destination(ref, 90.0, 1000.0)
+        proj.toPixels(GeoPoint(ref.lat, ref.lon), a)
+        proj.toPixels(GeoPoint(far.lat, far.lon), b)
+        val pxPerM = abs(b.x - a.x) / 1000.0
+        if (pxPerM < 0.02) return // zoomed far out: dots only
+        val sigmaM = SIGMA_M
+        val padM = sigmaM * 3
+        val midLat = points.sumOf { it.lat } / points.size
+        val dLat = padM / 111_320.0
+        val dLon = padM / (111_320.0 * kotlin.math.cos(Math.toRadians(midLat)).coerceAtLeast(0.05))
+        val n = points.maxOf { it.lat } + dLat
+        val w = points.minOf { it.lon } - dLon
+        val s = points.minOf { it.lat } - dLat
+        val e = points.maxOf { it.lon } + dLon
+        proj.toPixels(GeoPoint(n, w), a)
+        val ax = a.x
+        val ay = a.y
+        proj.toPixels(GeoPoint(s, e), b)
+        val widthPx = (b.x - ax).toFloat().coerceAtLeast(1f)
+        val heightPx = (b.y - ay).toFloat().coerceAtLeast(1f)
+        var cell = 4f * density
+        while (widthPx / cell > MAX_CELLS || heightPx / cell > MAX_CELLS) cell *= 1.5f
+        val gw = kotlin.math.ceil(widthPx / cell).toInt().coerceAtLeast(1)
+        val gh = kotlin.math.ceil(heightPx / cell).toInt().coerceAtLeast(1)
+        val sum = FloatArray(gw * gh)
+        val cnt = FloatArray(gw * gh)
+        for (p in points) {
+            proj.toPixels(GeoPoint(p.lat, p.lon), b)
+            val x = ((b.x - ax) / cell).toInt()
+            val y = ((b.y - ay) / cell).toInt()
+            if (x !in 0 until gw || y !in 0 until gh) continue
+            sum[y * gw + x] += p.rssi.toFloat()
+            cnt[y * gw + x] += 1f
+        }
+        val sigmaCells = (sigmaM * pxPerM / cell).toFloat().coerceAtLeast(0.8f)
+        blur(sum, gw, gh, sigmaCells)
+        blur(cnt, gw, gh, sigmaCells)
+        val pixels = IntArray(gw * gh)
+        for (i in pixels.indices) {
+            val weight = cnt[i]
+            if (weight < 0.06f) continue
+            val alpha = (weight.coerceAtMost(1f) * 150).toInt()
+            pixels[i] = (alpha shl 24) or com.networkmapper.app.util.Wifi.rssiColorSmooth((sum[i] / weight).toDouble())
+        }
+        bmp = Bitmap.createBitmap(pixels, gw, gh, Bitmap.Config.ARGB_8888)
+        // Exact geographic corners of the bitmap, so it can be stretched while the map moves.
+        val se = proj.fromPixels((ax + gw * cell).toInt(), (ay + gh * cell).toInt())
+        north = n
+        west = w
+        south = se.latitude
+        east = se.longitude
+    }
+
+    /** Separable Gaussian blur with peak weight 1 (a lone reading keeps weight 1 at its own cell). */
+    private fun blur(v: FloatArray, w: Int, h: Int, sigma: Float) {
+        val r = kotlin.math.ceil(3 * sigma).toInt()
+        val k = FloatArray(2 * r + 1) { i -> val d = (i - r).toFloat(); kotlin.math.exp(-(d * d) / (2 * sigma * sigma)) }
+        val tmp = FloatArray(v.size)
+        for (y in 0 until h) for (x in 0 until w) {
+            var acc = 0f
+            for (i in -r..r) {
+                val xx = x + i
+                if (xx in 0 until w) acc += v[y * w + xx] * k[i + r]
+            }
+            tmp[y * w + x] = acc
+        }
+        for (y in 0 until h) for (x in 0 until w) {
+            var acc = 0f
+            for (i in -r..r) {
+                val yy = y + i
+                if (yy in 0 until h) acc += tmp[yy * w + x] * k[i + r]
+            }
+            v[y * w + x] = acc
+        }
+    }
+
+    companion object {
+        /** How far (metres) each reading's influence spreads. */
+        const val SIGMA_M = 5.0
+        private const val MAX_CELLS = 360f
     }
 }

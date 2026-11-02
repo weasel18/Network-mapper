@@ -74,6 +74,8 @@ class UnifiViewModel(app: Application) : AndroidViewModel(app) {
 
     var url by mutableStateOf(saved.url)
     var useApiKey by mutableStateOf(saved.useApiKey)
+    /** UniFi cloud (api.ui.com) instead of the console's own address. */
+    var cloud by mutableStateOf(saved.cloud)
     var username by mutableStateOf(saved.username)
     var secret by mutableStateOf(saved.secret)
     var remember by mutableStateOf(saved.remember)
@@ -94,7 +96,7 @@ class UnifiViewModel(app: Application) : AndroidViewModel(app) {
         get() = if (useApiKey) UnifiAuth.ApiKey(secret.trim()) else UnifiAuth.Login(username.trim(), secret)
 
     val canConnect: Boolean
-        get() = url.isNotBlank() && secret.isNotBlank() && (useApiKey || username.isNotBlank())
+        get() = secret.isNotBlank() && (cloud || (url.isNotBlank() && (useApiKey || username.isNotBlank())))
 
     private var savedSite: UnifiSite? = saved.siteRef.takeIf { it.isNotBlank() }?.let {
         UnifiSite(saved.siteId.ifBlank { null }, it, saved.siteName)
@@ -112,6 +114,7 @@ class UnifiViewModel(app: Application) : AndroidViewModel(app) {
             siteRef = savedSite?.reference ?: "",
             siteId = savedSite?.id ?: "",
             siteName = savedSite?.name ?: "",
+            cloud = cloud,
         ),
     )
 
@@ -120,6 +123,7 @@ class UnifiViewModel(app: Application) : AndroidViewModel(app) {
         busy = true
         error = null
         devices = null
+        if (cloud) return connectCloud()
         viewModelScope.launch {
             try {
                 val base = UnifiClient.normalizeBase(url)
@@ -146,7 +150,32 @@ class UnifiViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Every device on every console linked to the UI.com account, from api.ui.com. */
+    private fun connectCloud() {
+        sites = emptyList()
+        viewModelScope.launch {
+            try {
+                val list = com.networkmapper.app.unifi.UnifiCloudClient(secret).devices()
+                    .map { it.toUnifiDevice() }
+                    .sortedWith(compareBy({ kindOrder(it.kind) }, { it.displayName.lowercase() }))
+                devices = list
+                selected = list.map { it.mac }.toSet()
+                savedSite = UnifiSite(null, "cloud", "UniFi cloud")
+                persist()
+                if (list.isEmpty()) error = "Connected, but the UniFi cloud returned no devices for this account."
+            } catch (e: Exception) {
+                error = when (e) {
+                    is UnknownHostException, is ConnectException, is SocketTimeoutException -> "Can't reach the UniFi cloud – is this phone online?"
+                    else -> e.message ?: e.javaClass.simpleName
+                }
+            } finally {
+                busy = false
+            }
+        }
+    }
+
     fun loadDevices() {
+        if (cloud) return connect()
         val s = site ?: return
         val c = client ?: return connect()
         busy = true
@@ -243,57 +272,79 @@ fun UnifiScreen(mainVm: MainViewModel, onBack: () -> Unit, vm: UnifiViewModel = 
                 Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("Connect", style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            "Pull device names, models, IPs and AP radio BSSIDs from your UniFi Network controller. " +
-                                "This phone must be able to reach it (same network or VPN).",
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                        OutlinedTextField(
-                            value = vm.url,
-                            onValueChange = { vm.url = it },
-                            label = { Text("Controller address") },
-                            placeholder = { Text("192.168.1.1  or  unifi.local:8443") },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                            modifier = Modifier.fillMaxWidth(),
-                        )
                         SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                             SegmentedButton(
-                                selected = vm.useApiKey,
-                                onClick = { vm.useApiKey = true },
+                                selected = !vm.cloud,
+                                onClick = { vm.cloud = false },
                                 shape = SegmentedButtonDefaults.itemShape(0, 2),
-                            ) { Text("API key") }
+                            ) { Text("Console (direct)") }
                             SegmentedButton(
-                                selected = !vm.useApiKey,
-                                onClick = { vm.useApiKey = false },
+                                selected = vm.cloud,
+                                onClick = { vm.cloud = true },
                                 shape = SegmentedButtonDefaults.itemShape(1, 2),
-                            ) { Text("Username & password") }
+                            ) { Text("UniFi cloud") }
                         }
-                        if (vm.useApiKey) {
+                        if (vm.cloud) {
                             Text(
-                                "UniFi OS consoles (UDM, UCG, Cloud Key Gen2+, UniFi OS Server) with Network 9.0+: " +
-                                    "Network → Settings → Control Plane → Integrations → Create API key.",
-                                style = MaterialTheme.typography.labelSmall,
+                                "Uses Ubiquiti's cloud (api.ui.com), so it works anywhere with internet – no VPN. " +
+                                    "Create a key at unifi.ui.com → API (as the console owner or a super admin). " +
+                                    "Gives device names, models, IPs, MACs, online status, firmware and uptime. AP radio " +
+                                    "BSSIDs, clients and port details need the direct console connection.",
+                                style = MaterialTheme.typography.bodySmall,
                             )
                         } else {
                             Text(
-                                "Works with UniFi OS consoles and classic self-hosted controllers. Use a local admin or " +
-                                    "read-only account – Ubiquiti accounts with 2FA can't sign in from apps. This method " +
-                                    "always includes AP radio BSSIDs.",
-                                style = MaterialTheme.typography.labelSmall,
+                                "Pull device names, models, IPs and AP radio BSSIDs from your UniFi Network controller. " +
+                                    "This phone must be able to reach it (same network or VPN).",
+                                style = MaterialTheme.typography.bodySmall,
                             )
                             OutlinedTextField(
-                                value = vm.username,
-                                onValueChange = { vm.username = it },
-                                label = { Text("Username") },
+                                value = vm.url,
+                                onValueChange = { vm.url = it },
+                                label = { Text("Controller address") },
+                                placeholder = { Text("192.168.1.1  or  unifi.local:8443") },
                                 singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                                 modifier = Modifier.fillMaxWidth(),
                             )
+                            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                                SegmentedButton(
+                                    selected = vm.useApiKey,
+                                    onClick = { vm.useApiKey = true },
+                                    shape = SegmentedButtonDefaults.itemShape(0, 2),
+                                ) { Text("API key") }
+                                SegmentedButton(
+                                    selected = !vm.useApiKey,
+                                    onClick = { vm.useApiKey = false },
+                                    shape = SegmentedButtonDefaults.itemShape(1, 2),
+                                ) { Text("Username & password") }
+                            }
+                            if (vm.useApiKey) {
+                                Text(
+                                    "UniFi OS consoles (UDM, UCG, Cloud Key Gen2+, UniFi OS Server) with Network 9.0+: " +
+                                        "Network → Settings → Control Plane → Integrations → Create API key.",
+                                    style = MaterialTheme.typography.labelSmall,
+                                )
+                            } else {
+                                Text(
+                                    "Works with UniFi OS consoles and classic self-hosted controllers. Use a local admin or " +
+                                        "read-only account – Ubiquiti accounts with 2FA can't sign in from apps. This method " +
+                                        "always includes AP radio BSSIDs.",
+                                    style = MaterialTheme.typography.labelSmall,
+                                )
+                                OutlinedTextField(
+                                    value = vm.username,
+                                    onValueChange = { vm.username = it },
+                                    label = { Text("Username") },
+                                    singleLine = true,
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            }
                         }
                         OutlinedTextField(
                             value = vm.secret,
                             onValueChange = { vm.secret = it },
-                            label = { Text(if (vm.useApiKey) "API key" else "Password") },
+                            label = { Text(if (vm.cloud) "UniFi cloud API key" else if (vm.useApiKey) "API key" else "Password") },
                             singleLine = true,
                             visualTransformation = PasswordVisualTransformation(),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),

@@ -73,6 +73,8 @@ data class MapSettings(
     val showHeatmap: Boolean = false,
     /** Antenna coverage patterns on AP / bridge / router pins. */
     val showPatterns: Boolean = true,
+    /** Smooth average-signal colour surface under the heatmap dots. */
+    val showHeatSurface: Boolean = true,
     val tileStyle: TileStyle = TileStyle.STREET,
     val hiddenTypes: Set<AssetType> = emptySet(),
 )
@@ -675,18 +677,22 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     /** True when a UniFi login and site are saved (so devices can be fetched without the UniFi screen). */
     suspend fun unifiConfigured(): Boolean = withContext(Dispatchers.IO) {
-        unifiStore.load().let { it.url.isNotBlank() && it.secret.isNotBlank() && it.siteRef.isNotBlank() }
+        unifiStore.load().ready
     }
 
     /** Re-reads the device list from the controller into the local cache. Returns an error message, or null. */
     suspend fun refreshUnifiDevices(): String? {
         val settings = withContext(Dispatchers.IO) { unifiStore.load() }
-        if (settings.url.isBlank() || settings.secret.isBlank() || settings.siteRef.isBlank()) {
+        if (!settings.ready) {
             return "Sign in on the UniFi screen (with “Remember” ticked) and load devices once."
         }
         return try {
-            val (client, auth, site) = unifiSession(settings)
-            val list = client.devices(auth, site)
+            val list = if (settings.cloud) {
+                com.networkmapper.app.unifi.UnifiCloudClient(settings.secret).devices().map { it.toUnifiDevice() }
+            } else {
+                val (client, auth, site) = unifiSession(settings)
+                client.devices(auth, site)
+            }
             unifiDevices.value = withContext(Dispatchers.IO) {
                 unifiStore.saveDevices(list)
                 unifiStore.loadDevices()
@@ -730,13 +736,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (livePaused) return
         liveJob = viewModelScope.launch {
             val settings = withContext(Dispatchers.IO) { unifiStore.load() }
-            if (settings.url.isBlank() || settings.secret.isBlank() || settings.siteRef.isBlank()) {
+            if (!settings.ready) {
                 unifiLive.value = LiveState.Failed(
                     device,
                     "Sign in on the UniFi screen with “Remember” ticked and load devices to see live status.",
                 )
                 return@launch
             }
+            if (settings.cloud) return@launch pollCloud(device, settings.secret)
             val (client, auth, site) = unifiSession(settings)
             var last = (unifiLive.value as? LiveState.Ok)?.takeIf { it.device.mac == device.mac }?.live
             if (last == null) unifiLive.value = LiveState.Loading(device)
@@ -760,6 +767,35 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 delay(10_000)
             }
+        }
+    }
+
+    /** Live status from the UniFi cloud: device-level only (online, firmware, uptime, IP), every 30 s. */
+    private suspend fun pollCloud(device: UnifiDevice, key: String) {
+        val cloud = com.networkmapper.app.unifi.UnifiCloudClient(key)
+        var last = (unifiLive.value as? LiveState.Ok)?.takeIf { it.device.mac == device.mac }?.live
+        if (last == null) unifiLive.value = LiveState.Loading(device)
+        while (kotlinx.coroutines.currentCoroutineContext().isActive) {
+            try {
+                val found = cloud.devices().firstOrNull { it.mac == device.mac.lowercase() }
+                if (found == null) {
+                    unifiLive.value = LiveState.Failed(device, "Not found in the UniFi cloud (is its console linked to your UI.com account?)", last)
+                } else {
+                    val live = found.toLive()
+                    last = live
+                    unifiLive.value = LiveState.Ok(device, live)
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val msg = when (e) {
+                    is java.net.UnknownHostException, is java.net.ConnectException, is java.net.SocketTimeoutException ->
+                        "Can't reach the UniFi cloud – is this phone online?"
+                    else -> e.message ?: e.javaClass.simpleName
+                }
+                unifiLive.value = LiveState.Failed(device, msg, last)
+            }
+            delay(30_000)
         }
     }
 

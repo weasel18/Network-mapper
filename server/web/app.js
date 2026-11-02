@@ -145,6 +145,75 @@ async function push(changes) {
 // ---------------------------------------------------------------- map
 
 let map, layers = {}, baseLayers;
+
+// Smooth "average signal" surface under the heatmap dots: readings averaged over a few metres (Gaussian weighting),
+// coloured with the signal ramp, fading out where there are no readings. Redrawn when the map stops moving.
+const RAMP = [[-50, [0x1b, 0x9e, 0x3e]], [-60, [0x7c, 0xb3, 0x42]], [-67, [0xfd, 0xd8, 0x35]], [-75, [0xfb, 0x8c, 0x00]], [-85, [0xe5, 0x39, 0x35]], [-95, [0x8e, 0x00, 0x00]]];
+function rampColor(v) {
+  if (v >= RAMP[0][0]) return RAMP[0][1];
+  for (let i = 1; i < RAMP.length; i++) {
+    const [hi, ch] = RAMP[i - 1], [lo, cl] = RAMP[i];
+    if (v >= lo) { const t = (hi - v) / (hi - lo); return ch.map((c, k) => Math.round(c * (1 - t) + cl[k] * t)); }
+  }
+  return RAMP[RAMP.length - 1][1];
+}
+const HeatSurfaceLayer = L.Layer.extend({
+  SIGMA_M: 5,
+  initialize() { this.points = []; },
+  setPoints(points) { this.points = points; if (this._map) this._redraw(); return this; },
+  onAdd(m) {
+    this._canvas = L.DomUtil.create("canvas", "heat-surface");
+    this._canvas.style.pointerEvents = "none";
+    m.getPane("overlayPane").appendChild(this._canvas);
+    m.on("moveend zoomend resize", this._redraw, this);
+    m.on("zoomstart", this._hide, this);
+    this._redraw();
+  },
+  onRemove(m) { this._canvas.remove(); m.off("moveend zoomend resize", this._redraw, this); m.off("zoomstart", this._hide, this); },
+  _hide() { this._canvas.style.display = "none"; },
+  _redraw() {
+    const m = this._map, cv = this._canvas, size = m.getSize();
+    cv.width = size.x; cv.height = size.y;
+    L.DomUtil.setPosition(cv, m.containerPointToLayerPoint([0, 0]));
+    cv.style.display = "";
+    const ctx = cv.getContext("2d");
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    if (!this.points.length) return;
+    const p0 = this.points[0], a = m.latLngToContainerPoint([p0[0], p0[1]]), b = m.latLngToContainerPoint(destination([p0[0], p0[1]], 90, 1000));
+    const pxPerM = Math.abs(b.x - a.x) / 1000;
+    if (pxPerM < 0.02) return; // zoomed far out: dots only
+    const sigmaPx = this.SIGMA_M * pxPerM, pad = 3 * sigmaPx;
+    // The grid reaches `pad` beyond the screen so readings just off-screen still colour the edges.
+    const cell = Math.max(4, Math.ceil((Math.max(size.x, size.y) + 2 * pad) / 360));
+    const off = Math.ceil(pad / cell) * cell;
+    const gw = Math.ceil((size.x + 2 * off) / cell), gh = Math.ceil((size.y + 2 * off) / cell);
+    const sum = new Float32Array(gw * gh), cnt = new Float32Array(gw * gh);
+    for (const [lat, lon, rssi] of this.points) {
+      const q = m.latLngToContainerPoint([lat, lon]);
+      const x = Math.floor((q.x + off) / cell), y = Math.floor((q.y + off) / cell);
+      if (x < 0 || y < 0 || x >= gw || y >= gh) continue;
+      sum[y * gw + x] += rssi; cnt[y * gw + x] += 1;
+    }
+    const sc = Math.max(0.8, sigmaPx / cell), r = Math.ceil(3 * sc);
+    const k = Float32Array.from({ length: 2 * r + 1 }, (_, i) => Math.exp(-((i - r) ** 2) / (2 * sc * sc)));
+    const blur = (v) => {
+      const t = new Float32Array(v.length);
+      for (let y = 0; y < gh; y++) for (let x = 0; x < gw; x++) { let s = 0; for (let i = -r; i <= r; i++) { const xx = x + i; if (xx >= 0 && xx < gw) s += v[y * gw + xx] * k[i + r]; } t[y * gw + x] = s; }
+      for (let y = 0; y < gh; y++) for (let x = 0; x < gw; x++) { let s = 0; for (let i = -r; i <= r; i++) { const yy = y + i; if (yy >= 0 && yy < gh) s += t[yy * gw + x] * k[i + r]; } v[y * gw + x] = s; }
+    };
+    blur(sum); blur(cnt);
+    const small = document.createElement("canvas"); small.width = gw; small.height = gh;
+    const sctx = small.getContext("2d"), img = sctx.createImageData(gw, gh);
+    for (let i = 0; i < gw * gh; i++) {
+      if (cnt[i] < 0.06) continue;
+      const [rr, gg, bb] = rampColor(sum[i] / cnt[i]);
+      img.data.set([rr, gg, bb, Math.round(Math.min(1, cnt[i]) * 150)], i * 4);
+    }
+    sctx.putImageData(img, 0, 0);
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(small, -off, -off, gw * cell, gh * cell);
+  },
+});
 function initMap() {
   map = L.map("map", { preferCanvas: true, zoomControl: true }).setView([39.5, -98.35], 4);
   baseLayers = {
@@ -158,6 +227,7 @@ function initMap() {
   L.control.layers(baseLayers, null, { position: "bottomleft" }).addTo(map);
   map.on("baselayerchange", (e) => { try { localStorage.setItem("nm.base", e.name); } catch (err) { /* ignore */ } });
   L.control.scale({ position: "bottomright" }).addTo(map);
+  layers.surface = new HeatSurfaceLayer().addTo(map);
   layers.heat = L.layerGroup().addTo(map);
   layers.patterns = L.layerGroup().addTo(map);
   layers.paths = L.layerGroup().addTo(map);
@@ -930,6 +1000,7 @@ async function openDevices() {
 
 async function refreshHeat() {
   layers.heat.clearLayers();
+  layers.surface.setPoints([]);
   const v = $("#heat-select").value;
   if (!v || !S.site) { layers.legend.remove(); return; }
   $("#status").textContent = "Loading Wi-Fi survey…";
@@ -949,6 +1020,7 @@ async function refreshHeat() {
     const old = spots.get(k);
     if (!old || r.rssi > old.rssi) spots.set(k, r);
   }
+  layers.surface.setPoints($("#chk-surface").checked ? [...spots.values()].map((r) => [r.lat, r.lon, r.rssi]) : []);
   for (const r of spots.values()) {
     const name = S.apNames.get(String(r.bssid).toLowerCase())?.data.name;
     layers.heat.addLayer(L.circleMarker([r.lat, r.lon], { radius: 6, stroke: false, fillColor: rssiColor(r.rssi), fillOpacity: 0.75 })
@@ -1100,6 +1172,7 @@ window.addEventListener("DOMContentLoaded", () => {
     $("#d-go").onclick = () => startDraw($("#d-kind").value, null);
   };
   ["#chk-pins", "#chk-paths", "#chk-patterns"].forEach((s) => ($(s).onchange = render));
+  $("#chk-surface").onchange = refreshHeat;
   $("#heat-select").onchange = refreshHeat;
   $("#site-select").onchange = () => { S.site = $("#site-select").value; localStorage.setItem("nm.site", S.site); S.selected = null; closePanel(); render(); openSiteView(); refreshHeat(); };
   const toggle = (id) => $(id).classList.toggle("hidden");

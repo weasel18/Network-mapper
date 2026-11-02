@@ -144,6 +144,7 @@ fun AppRoot() {
                 onOpenData = { nav.navigate(Routes.DATA) },
                 onOpenSites = { nav.navigate(Routes.SITES) },
                 onOpenSync = { nav.navigate(Routes.SYNC) },
+                onOpenPhoto = { nav.navigate(Routes.photo(it)) },
             )
         }
         composable(Routes.LIST) {
