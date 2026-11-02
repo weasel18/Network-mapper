@@ -767,7 +767,6 @@ private fun StatusChip(text: String, color: Color, onClick: (() -> Unit)? = null
     }
 }
 
-/** Always-visible button showing the open site; opens the Sites screen (open / new / save / load). */
 @Composable
 private fun GpsChip(location: Location?, hasPermission: Boolean, onRequestPermission: () -> Unit) {
     when {
