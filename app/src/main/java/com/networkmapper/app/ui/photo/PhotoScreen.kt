@@ -76,26 +76,17 @@ fun PhotoScreen(vm: MainViewModel, photoId: Long, onBack: () -> Unit, onShowOnMa
     }
     val siblings by siblingsFlow.collectAsStateWithLifecycle(emptyList())
     val photos = siblings.ifEmpty { listOfNotNull(opened) }
-    if (photos.isEmpty()) {
-        Scaffold(topBar = {
-            TopAppBar(
-                title = { Text("Photo") },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
-            )
-        }) { padding -> Box(Modifier.padding(padding)) }
-        return
-    }
-    val start = photos.indexOfFirst { it.id == photoId }.coerceAtLeast(0)
-    val pager = rememberPagerState(initialPage = start) { photos.size }
-    // Once the full list arrives, make sure we're still on the photo that was tapped.
+    val pager = rememberPagerState { photos.size }
+    // Go to the photo that was tapped once it's in the list (the list arrives a moment after the screen opens).
     var positioned by remember { mutableStateOf(false) }
-    LaunchedEffect(siblings.size) {
-        if (!positioned && siblings.isNotEmpty()) {
-            pager.scrollToPage(siblings.indexOfFirst { it.id == photoId }.coerceAtLeast(0))
+    LaunchedEffect(photos.map { it.id }) {
+        val index = photos.indexOfFirst { it.id == photoId }
+        if (!positioned && index >= 0 && siblings.isNotEmpty()) {
+            pager.scrollToPage(index)
             positioned = true
         }
     }
-    val current = photos.getOrNull(pager.currentPage.coerceIn(0, photos.size - 1))
+    val current = photos.getOrNull(pager.currentPage)
     var caption by remember(current?.id) { mutableStateOf(current?.caption ?: "") }
     var confirmDelete by remember { mutableStateOf(false) }
     var zoomed by remember { mutableStateOf(false) }
@@ -103,7 +94,7 @@ fun PhotoScreen(vm: MainViewModel, photoId: Long, onBack: () -> Unit, onShowOnMa
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(if (photos.size > 1) "Photo ${pager.currentPage + 1} of ${photos.size}" else "Photo") },
+                title = { Text(if (photos.size > 1) "Photo ${(pager.currentPage + 1).coerceAtMost(photos.size)} of ${photos.size}" else "Photo") },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
                 actions = {
                     val p = current
@@ -137,17 +128,19 @@ fun PhotoScreen(vm: MainViewModel, photoId: Long, onBack: () -> Unit, onShowOnMa
                 state = pager,
                 // While a photo is zoomed in, dragging pans it instead of changing photo.
                 userScrollEnabled = !zoomed,
-                key = { photos[it].id },
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
                     .background(Color.Black),
             ) { page ->
-                ZoomablePhoto(
-                    model = vm.repo.photoFile(photos[page]),
-                    description = photos[page].caption.ifEmpty { "Photo" },
-                    onZoomChange = { if (page == pager.currentPage) zoomed = it },
-                )
+                val ph = photos.getOrNull(page)
+                if (ph != null) {
+                    ZoomablePhoto(
+                        model = vm.repo.photoFile(ph),
+                        description = ph.caption.ifEmpty { "Photo" },
+                        onZoomChange = { if (page == pager.currentPage) zoomed = it },
+                    )
+                }
             }
             val p = current
             if (p != null) {

@@ -48,6 +48,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             NetworkMapperTheme {
                 AppRoot()
+                com.networkmapper.app.ui.components.CrashReportDialog()
             }
         }
     }

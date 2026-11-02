@@ -31,6 +31,7 @@ class NetworkMapperApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        com.networkmapper.app.util.CrashLog.install(this)
         val db = AppDatabase.build(this)
         repository = Repository(this, db)
         wifiFilter = WifiFilterStore(this)
