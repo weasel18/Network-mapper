@@ -13,6 +13,9 @@ html, body { margin: 0; height: 100%; font: 14px/1.4 system-ui, -apple-system, "
 .error { color: var(--danger); min-height: 1em; }
 .row { display: inline-flex; align-items: center; gap: 4px; }
 .grow { flex: 1; }
+.mobile-only { display: none; }
+.fab-bar, .layers-box { display: contents; }
+#status { margin-left: auto; }
 .sep { width: 1px; height: 22px; background: var(--line); }
 button, select, input, textarea {
   font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 5px 9px;
@@ -92,4 +95,28 @@ main { position: fixed; top: 48px; left: 0; right: 0; bottom: 0; }
 /* Phones / tablets: iOS Safari zooms the page into any text field under 16px, so fields use 16px there. */
 @media (pointer: coarse), (max-width: 700px) {
   input, select, textarea { font-size: 16px; }
+}
+
+.toast { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%); z-index: 3000; max-width: calc(100% - 32px);
+  background: #263238; color: #fff; padding: 10px 16px; border-radius: 20px; box-shadow: 0 4px 14px rgba(0,0,0,.3); }
+
+/* ---- Phones: short top bar, floating Pin / Route buttons, Layers dropdown ---- */
+@media (max-width: 700px) {
+  .topbar { overflow: visible; gap: 6px; padding: 0 8px; }
+  #site-select { flex: 1; min-width: 0; }
+  .mobile-only { display: inline-block; }
+  .fab-bar { display: grid; gap: 10px; position: fixed; right: 12px; bottom: calc(96px + env(safe-area-inset-bottom)); justify-items: end; }
+  .fab-bar button { padding: 12px 18px; border-radius: 26px; font-weight: 600; background: var(--primary); color: var(--primary-text);
+    border-color: var(--primary); box-shadow: 0 4px 12px rgba(0,0,0,.3); }
+  .fab-bar button.active { background: #ff6f00; border-color: #ff6f00; color: #fff; }
+  body.panel-open .fab-bar { display: none; }
+  .layers-box { display: none; }
+  body.layers-open .layers-box { display: grid; gap: 10px; position: fixed; top: 52px; right: 8px; width: min(280px, calc(100% - 16px));
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px; box-shadow: 0 6px 20px rgba(0,0,0,.2); }
+  .layers-box label.row { font-size: 15px; gap: 8px; }
+  .layers-box input[type=checkbox] { width: 20px; height: 20px; }
+  body.layers-open #btn-layers { background: var(--primary); color: var(--primary-text); }
+  .leaflet-control-layers { display: none; }
+  #status { margin-left: 0; }
+  .hint { top: 8px; font-size: 13px; }
 }

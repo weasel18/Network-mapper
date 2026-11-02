@@ -25,18 +25,29 @@
     <select id="site-select" title="Site"></select>
     <button id="btn-site-menu" title="Site options">⋯</button>
     <span class="sep"></span>
-    <button id="btn-add-pin" title="Click the map to drop a pin">＋ Pin</button>
-    <button id="btn-draw-path" title="Click the map to draw a route">〰 Route</button>
+    <!-- On phones these become floating buttons at the bottom right. -->
+    <div id="fab-bar" class="fab-bar">
+      <button id="btn-add-pin" title="Click the map to drop a pin">＋ Pin</button>
+      <button id="btn-draw-path" title="Click the map to draw a route">〰 Route</button>
+    </div>
     <span class="sep"></span>
-    <label class="row small"><input type="checkbox" id="chk-pins" checked> Pins</label>
-    <label class="row small"><input type="checkbox" id="chk-paths" checked> Routes</label>
-    <label class="row small"><input type="checkbox" id="chk-patterns" checked> Coverage</label>
-    <select id="heat-select" title="Wi-Fi heatmap">
-      <option value="">Wi-Fi heatmap: off</option>
-      <option value="*">Heatmap: strongest signal</option>
-    </select>
-    <span class="grow"></span>
-    <span id="status" class="muted small"></span>
+    <!-- On phones this becomes the dropdown under the Layers button. -->
+    <div id="layers-box" class="layers-box">
+      <select id="base-select" class="mobile-only" title="Map style">
+        <option value="Street">Street map</option>
+        <option value="Satellite">Satellite</option>
+        <option value="Topographic">Topographic</option>
+      </select>
+      <label class="row small"><input type="checkbox" id="chk-pins" checked> Pins</label>
+      <label class="row small"><input type="checkbox" id="chk-paths" checked> Routes</label>
+      <label class="row small"><input type="checkbox" id="chk-patterns" checked> Coverage</label>
+      <select id="heat-select" title="Wi-Fi heatmap">
+        <option value="">Wi-Fi heatmap: off</option>
+        <option value="*">Heatmap: strongest signal</option>
+      </select>
+      <span id="status" class="muted small"></span>
+    </div>
+    <button id="btn-layers" class="mobile-only" title="Layers &amp; heatmap">Layers</button>
     <button id="btn-more" title="More">☰</button>
   </header>
 

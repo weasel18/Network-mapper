@@ -142,8 +142,19 @@ function initMap() {
     "Satellite": L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", { maxZoom: 22, maxNativeZoom: 19, attribution: "Imagery © Esri, Maxar, Earthstar Geographics" }),
     "Topographic": L.tileLayer("https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png", { maxZoom: 22, maxNativeZoom: 17, attribution: "© OpenTopoMap (CC-BY-SA)" }),
   };
-  baseLayers.Street.addTo(map);
+  let base = "Street";
+  try { if (baseLayers[localStorage.getItem("nm.base")]) base = localStorage.getItem("nm.base"); } catch (e) { /* storage blocked */ }
+  baseLayers[base].addTo(map);
   L.control.layers(baseLayers, null, { position: "bottomleft" }).addTo(map);
+  // Phones pick the map style in the Layers dropdown; desktop uses the control. Both stay in step.
+  $("#base-select").value = base;
+  map.on("baselayerchange", (e) => { $("#base-select").value = e.name; try { localStorage.setItem("nm.base", e.name); } catch (err) { /* ignore */ } });
+  $("#base-select").onchange = () => {
+    const name = $("#base-select").value;
+    Object.values(baseLayers).forEach((l) => map.removeLayer(l));
+    baseLayers[name].addTo(map);
+    try { localStorage.setItem("nm.base", name); } catch (err) { /* ignore */ }
+  };
   L.control.scale({ position: "bottomright" }).addTo(map);
   layers.heat = L.layerGroup().addTo(map);
   layers.patterns = L.layerGroup().addTo(map);
@@ -337,7 +348,17 @@ function cancelMode() {
   if (S.selected) openDetails();
 }
 
+const closeLayers = () => document.body.classList.remove("layers-open");
+/** Short message at the bottom of the screen. */
+function toast(msg) {
+  const t = document.createElement("div");
+  t.className = "toast"; t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 2800);
+}
+
 function onMapClick(e) {
+  if (document.body.classList.contains("layers-open")) { closeLayers(); return; }
   const pt = [e.latlng.lat, e.latlng.lng];
   if (S.mode === "add-pin") { S.mode = null; $("#btn-add-pin").classList.remove("active"); hideHint(); openNewPin(pt); return; }
   if (S.mode === "draw" || S.mode === "edit-route") { S.draft.points.push(pt); S.draft.endAsset = ""; render(); return; }
@@ -419,8 +440,8 @@ async function savePinMove() {
 // ---------------------------------------------------------------- side panel
 
 const panel = () => $("#panel");
-function closePanel() { panel().classList.add("hidden"); panel().innerHTML = ""; }
-function openPanel(html) { panel().innerHTML = html; panel().classList.remove("hidden"); panel().querySelectorAll("[data-close]").forEach((b) => (b.onclick = () => { S.selected = null; if (S.mode) cancelMode(); closePanel(); render(); })); }
+function closePanel() { panel().classList.add("hidden"); panel().innerHTML = ""; document.body.classList.remove("panel-open"); }
+function openPanel(html) { panel().innerHTML = html; panel().classList.remove("hidden"); document.body.classList.add("panel-open"); closeLayers(); panel().querySelectorAll("[data-close]").forEach((b) => (b.onclick = () => { S.selected = null; if (S.mode) cancelMode(); closePanel(); render(); })); }
 
 function optionList(items, current) { return items.map(([v, l]) => `<option value="${esc(v)}"${v === current ? " selected" : ""}>${esc(l)}</option>`).join(""); }
 
@@ -879,11 +900,11 @@ async function siteAction(action) {
   else if (action === "site-home-set" && s) {
     const c = map.getCenter();
     await push([change("sites", s.id, s.id, "", { ...s.data, home: { lat: c.lat, lon: c.lng, zoom: map.getZoom() } })]);
-    $("#status").textContent = "Start view saved – opening this site now goes here";
+    toast("Start view saved – opening this site now goes here");
   } else if (action === "site-home-go") openSiteView();
   else if (action === "site-home-clear" && s) {
     await push([change("sites", s.id, s.id, "", { ...s.data, home: null })]);
-    $("#status").textContent = "Start view cleared";
+    toast("Start view cleared");
   }
   else if (action === "site-delete" && s) {
     if (prompt(`Type the site name to delete “${s.data.name}” and everything in it on all phones:`) !== s.data.name) return;
@@ -969,9 +990,11 @@ window.addEventListener("DOMContentLoaded", () => {
   $("#heat-select").onchange = refreshHeat;
   $("#site-select").onchange = () => { S.site = $("#site-select").value; localStorage.setItem("nm.site", S.site); S.selected = null; closePanel(); render(); openSiteView(); refreshHeat(); };
   const toggle = (id) => $(id).classList.toggle("hidden");
-  $("#btn-more").onclick = () => { $("#site-menu").classList.add("hidden"); toggle("#menu"); };
+  $("#btn-more").onclick = () => { $("#site-menu").classList.add("hidden"); closeLayers(); toggle("#menu"); };
+  $("#btn-layers").onclick = () => { $("#menu").classList.add("hidden"); $("#site-menu").classList.add("hidden"); document.body.classList.toggle("layers-open"); };
   $("#btn-site-menu").onclick = () => {
     $("#menu").classList.add("hidden");
+    closeLayers();
     const hasHome = !!S.sites.get(S.site)?.data.home;
     document.querySelectorAll('[data-action="site-home-go"], [data-action="site-home-clear"]').forEach((el) => el.classList.toggle("hidden", !hasHome));
     toggle("#site-menu");
