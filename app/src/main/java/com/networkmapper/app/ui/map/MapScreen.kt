@@ -38,7 +38,6 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Directions
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.GpsFixed
 import androidx.compose.material.icons.filled.GpsNotFixed
 import androidx.compose.material.icons.filled.Layers
@@ -426,7 +425,6 @@ fun MapScreen(
                     .padding(8.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                SiteChip(currentSite?.name ?: "…", onOpenSites)
                 GpsChip(location, hasLocationPermission, onRequestPermission)
                 if (surveyRunning) {
                     StatusChip(
@@ -770,31 +768,6 @@ private fun StatusChip(text: String, color: Color, onClick: (() -> Unit)? = null
 }
 
 /** Always-visible button showing the open site; opens the Sites screen (open / new / save / load). */
-@Composable
-private fun SiteChip(name: String, onClick: () -> Unit) {
-    Surface(
-        shape = RoundedCornerShape(20.dp),
-        color = MaterialTheme.colorScheme.primary,
-        contentColor = MaterialTheme.colorScheme.onPrimary,
-        shadowElevation = 4.dp,
-        modifier = Modifier.clickable(onClick = onClick),
-    ) {
-        Row(
-            Modifier.padding(start = 10.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(Icons.Default.FolderOpen, null, Modifier.size(18.dp))
-            Spacer(Modifier.width(6.dp))
-            Column {
-                Text("SITE", style = MaterialTheme.typography.labelSmall)
-                Text(name, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            Spacer(Modifier.width(4.dp))
-            Text("Sites ▾", style = MaterialTheme.typography.labelMedium)
-        }
-    }
-}
-
 @Composable
 private fun GpsChip(location: Location?, hasPermission: Boolean, onRequestPermission: () -> Unit) {
     when {
