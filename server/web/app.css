@@ -89,3 +89,7 @@ main { position: fixed; top: 48px; left: 0; right: 0; bottom: 0; }
   color: #263238; text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 3px #fff; pointer-events: none; }
 .pin.mini { display: inline-block; width: 20px; height: 20px; font-size: 10px; line-height: 17px; vertical-align: middle; }
 .card.stack { padding: 10px; margin: 8px 0; display: grid; gap: 4px; }
+/* Phones / tablets: iOS Safari zooms the page into any text field under 16px, so fields use 16px there. */
+@media (pointer: coarse), (max-width: 700px) {
+  input, select, textarea { font-size: 16px; }
+}
