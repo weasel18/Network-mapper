@@ -63,7 +63,37 @@ class Repository(private val context: Context, val db: AppDatabase) {
     suspend fun insertAsset(asset: Asset): Long = assetDao.insert(asset)
     suspend fun updateAsset(asset: Asset) = assetDao.update(asset.copy(updatedAt = now(), dirty = true))
 
+    suspend fun getAssetByUid(uid: String): Asset? = assetDao.getByUid(uid)
+    suspend fun getGroupMembers(location: Asset): List<Asset> = assetDao.getMembers(location.uid)
+
+    /** Moves a location pin and every device in it. */
+    suspend fun moveLocation(location: Asset, pt: GeoPt, accuracy: Float?, altitude: Double?) {
+        updateAsset(location.copy(latitude = pt.lat, longitude = pt.lon, accuracy = accuracy, altitude = altitude))
+        getGroupMembers(location).forEach { updateAsset(it.copy(latitude = pt.lat, longitude = pt.lon, accuracy = accuracy, altitude = altitude)) }
+    }
+
+    /** Puts a device into a location; it takes the location's position. */
+    suspend fun addToLocation(device: Asset, location: Asset) {
+        updateAsset(
+            device.copy(
+                groupUid = location.uid, latitude = location.latitude, longitude = location.longitude,
+                accuracy = location.accuracy, altitude = location.altitude,
+            ),
+        )
+    }
+
+    /** Takes a device out of its location and sets it a few metres away so it can be tapped. */
+    suspend fun removeFromLocation(device: Asset, bearingDeg: Double = 90.0) {
+        val p = com.networkmapper.app.util.Geo.destination(device.point(), bearingDeg, 4.0)
+        updateAsset(device.copy(groupUid = "", latitude = p.lat, longitude = p.lon, accuracy = null))
+    }
+
     suspend fun deleteAsset(asset: Asset) {
+        if (asset.isLocation) {
+            // Its devices become separate pins again, spread around where the location was.
+            val members = getGroupMembers(asset)
+            members.forEachIndexed { i, m -> removeFromLocation(m, 360.0 * i / members.size) }
+        }
         val photos = photoDao.getForAsset(asset.id)
         val sUid = siteUid(asset.siteId)
         tombstone("photos", sUid, photos.map { it.uid })

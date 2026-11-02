@@ -179,8 +179,10 @@ object Exporter {
         val photosByAsset = s.photos.filter { it.assetId != null }.groupBy { it.assetId }
         val photosByPath = s.photos.filter { it.pathId != null }.groupBy { it.pathId }
         val siteNames = s.sites.associate { it.id to it.name }
+        val byUid = s.assets.associateBy { it.uid }
         val features = JSONArray()
         s.assets.forEach { a ->
+            val location = byUid[a.groupUid]
             val props = JSONObject()
                 .put("id", a.id)
                 .put("featureType", "asset")
@@ -196,6 +198,8 @@ object Exporter {
                 .put("created", Fmt.iso(a.createdAt))
                 .put("updated", Fmt.iso(a.updatedAt))
                 .put("attributes", JSONObject(a.attributes))
+                .put("locationId", location?.id ?: JSONObject.NULL)
+                .put("locationName", location?.name ?: "")
                 .put("photos", JSONArray(photosByAsset[a.id].orEmpty().map { "photos/" + it.fileName }))
             features.put(
                 JSONObject()
@@ -379,6 +383,7 @@ object Exporter {
                     val rows = listOf(
                         "Site" to site.name,
                         "Type" to a.type.label,
+                        "Location" to (s.assets.firstOrNull { it.uid == a.groupUid && a.groupUid.isNotEmpty() }?.name ?: ""),
                         "Status" to a.status,
                         "Coordinates" to Geo.formatCoord(a.latitude, a.longitude),
                         "Accuracy" to (a.accuracy?.let { "±${it.toInt()} m" } ?: ""),

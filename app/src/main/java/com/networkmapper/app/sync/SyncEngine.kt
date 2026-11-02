@@ -207,6 +207,7 @@ class SyncEngine(
         .put("status", a.status).put("notes", a.notes)
         .put("attributes", JSONObject(AttributeCodec.encode(a.attributes)))
         .put("createdAt", a.createdAt)
+        .put("group", a.groupUid)
 
     private fun pathData(p: NetPath, assetUids: Map<Long, String>) = JSONObject()
         .put("kind", p.kind.name).put("name", p.name)
@@ -361,6 +362,7 @@ class SyncEngine(
             siteId = siteId,
             uid = uid,
             dirty = false,
+            groupUid = d.optString("group"),
         )
         if (local == null) sync.insertAsset(asset) else sync.updateAsset(asset)
         pulled++

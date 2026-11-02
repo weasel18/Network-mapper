@@ -119,12 +119,14 @@ fun AssetListScreen(
             }
 
             val q = query.trim().lowercase()
+            val locationNames = assets.filter { it.type == AssetType.LOCATION }.associate { it.uid to it.name }
             if (tab == 0) {
                 val rows = assets
                     .filter { typeFilter == null || it.type.name == typeFilter }
                     .filter { a ->
                         q.isEmpty() || a.name.lowercase().contains(q) || a.notes.lowercase().contains(q) ||
                             a.type.label.lowercase().contains(q) ||
+                            locationNames[a.groupUid]?.lowercase()?.contains(q) == true ||
                             a.attributes.values.any { it.lowercase().contains(q) }
                     }
                     .map { a -> a to me?.let { Geo.distanceMeters(it, GeoPt(a.latitude, a.longitude)) } }
@@ -144,7 +146,12 @@ fun AssetListScreen(
                             Column(Modifier.weight(1f)) {
                                 Text(a.name, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 Text(
-                                    listOfNotNull(a.type.label, a.status, dist?.let { Geo.formatDistance(it) }).joinToString(" • "),
+                                    listOfNotNull(
+                                        a.type.label,
+                                        locationNames[a.groupUid]?.let { "in $it" },
+                                        a.status,
+                                        dist?.let { Geo.formatDistance(it) },
+                                    ).joinToString(" • "),
                                     style = MaterialTheme.typography.bodySmall,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,

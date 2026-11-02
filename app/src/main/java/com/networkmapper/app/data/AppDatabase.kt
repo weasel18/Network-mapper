@@ -13,7 +13,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         Site::class, Asset::class, NetPath::class, Photo::class, SurveySession::class, WifiReading::class,
         ApName::class, SyncTombstone::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -100,6 +100,13 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** v4 -> v5: devices can share a location pin (closet / rack). */
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `assets` ADD COLUMN `groupUid` TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         private val createCallback = object : RoomDatabase.Callback() {
             override fun onCreate(db: SupportSQLiteDatabase) {
                 insertDefaultSite(db)
@@ -108,7 +115,7 @@ abstract class AppDatabase : RoomDatabase() {
 
         /** Shared configuration, also used by tests with an in-memory builder. */
         fun configure(builder: RoomDatabase.Builder<AppDatabase>): RoomDatabase.Builder<AppDatabase> =
-            builder.addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).addCallback(createCallback)
+            builder.addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5).addCallback(createCallback)
 
         fun build(context: Context): AppDatabase =
             configure(Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, "network_mapper.db"))

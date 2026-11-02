@@ -65,6 +65,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
@@ -103,6 +104,9 @@ import com.networkmapper.app.data.AssetType
 import com.networkmapper.app.data.Coverage
 import com.networkmapper.app.data.GeoPt
 import com.networkmapper.app.data.NetPath
+import com.networkmapper.app.data.isLocation
+import com.networkmapper.app.data.point
+import com.networkmapper.app.ui.GroupOffer
 import com.networkmapper.app.survey.SurveyState
 import com.networkmapper.app.ui.CoverageStats
 import com.networkmapper.app.ui.Draft
@@ -174,6 +178,11 @@ fun MapScreen(
     var follow by rememberSaveable { mutableStateOf(false) }
     var linkRadiosFor by remember { mutableStateOf<Asset?>(null) }
     var confirmLeaveDraft by remember { mutableStateOf(false) }
+    // Location (closet / rack) offers when placing or moving a pin near another one.
+    var newPinOffer by remember { mutableStateOf<Triple<PendingPin, AssetType, GroupOffer>?>(null) }
+    var moveOffer by remember { mutableStateOf<Pair<Asset, GroupOffer>?>(null) }
+    var addDeviceTo by remember { mutableStateOf<Asset?>(null) }
+    var showCombine by remember { mutableStateOf(false) }
 
     // ---- MapView ----
     val mapView = remember {
@@ -375,6 +384,10 @@ fun MapScreen(
                                 showMenu = false
                                 onOpenData()
                             })
+                            DropdownMenuItem(text = { Text("Combine stacked pins…") }, onClick = {
+                                showMenu = false
+                                showCombine = true
+                            })
                         }
                     }
                 },
@@ -447,8 +460,14 @@ fun MapScreen(
                         },
                         onCancel = vm::cancelPinMove,
                         onSave = {
-                            vm.savePinMove()
-                            Toast.makeText(context, "Pin position saved", Toast.LENGTH_SHORT).show()
+                            val moving = assets.firstOrNull { it.id == move.assetId }
+                            val offer = moving?.let { vm.groupOfferFor(move.current, it) }
+                            if (moving != null && offer != null) {
+                                moveOffer = moving to offer
+                            } else {
+                                vm.savePinMove()
+                                Toast.makeText(context, "Pin position saved", Toast.LENGTH_SHORT).show()
+                            }
                         },
                     )
                     d == null && spot != null -> SpotCard(
@@ -473,8 +492,26 @@ fun MapScreen(
                         onDeselect = { vm.selectDraftPoint(null) },
                         onEditPoints = vm::setDraftEditPoints,
                     )
+                    selAsset != null && selAsset.isLocation -> LocationCard(
+                        place = selAsset,
+                        members = assets.filter { it.groupUid == selAsset.uid && !it.isLocation }
+                            .sortedWith(compareBy({ it.type.ordinal }, { it.name })),
+                        location = location,
+                        onOpenMember = { vm.select(Selection.AssetSel(it.id)) },
+                        onAddDevice = { addDeviceTo = selAsset },
+                        onDetails = { onOpenAsset(selAsset.id) },
+                        onNavigate = { navigateTo(context, selAsset.latitude, selAsset.longitude, selAsset.name) },
+                        onMove = { vm.startPinMove(selAsset) },
+                        onClose = { vm.select(null) },
+                    )
                     selAsset != null -> AssetCard(
                         asset = selAsset,
+                        inLocation = assets.firstOrNull { it.isLocation && selAsset.groupUid.isNotEmpty() && it.uid == selAsset.groupUid },
+                        onOpenLocation = { loc -> vm.select(Selection.AssetSel(loc.id)) },
+                        onTakeOut = {
+                            vm.removeFromLocation(selAsset)
+                            Toast.makeText(context, "Taken out – it's a separate pin again", Toast.LENGTH_SHORT).show()
+                        },
                         location = location,
                         onEdit = { onOpenAsset(selAsset.id) },
                         onNavigate = { navigateTo(context, selAsset.latitude, selAsset.longitude, selAsset.name) },
@@ -547,12 +584,76 @@ fun MapScreen(
             subtitle = subtitle,
             onPick = { type ->
                 pendingPin = null
-                scope.launch {
-                    val id = vm.createAsset(type, pin.pt, pin.accuracy, pin.altitude)
-                    onOpenAsset(id)
+                val offer = if (type == AssetType.LOCATION) null else vm.groupOfferFor(pin.pt)
+                if (offer != null) {
+                    newPinOffer = Triple(pin, type, offer)
+                } else {
+                    scope.launch {
+                        val id = vm.createAsset(type, pin.pt, pin.accuracy, pin.altitude)
+                        onOpenAsset(id)
+                    }
                 }
             },
             onDismiss = { pendingPin = null },
+        )
+    }
+
+    newPinOffer?.let { (pin, type, offer) ->
+        GroupOfferDialog(
+            offer = offer,
+            deviceName = "the new ${type.label.substringBefore(" /")} pin",
+            separateLabel = "Separate pin",
+            onJoin = { name ->
+                newPinOffer = null
+                scope.launch { onOpenAsset(vm.createAssetIn(type, offer, name)) }
+            },
+            onSeparate = {
+                newPinOffer = null
+                scope.launch { onOpenAsset(vm.createAsset(type, pin.pt, pin.accuracy, pin.altitude)) }
+            },
+            onDismiss = { newPinOffer = null },
+        )
+    }
+
+    moveOffer?.let { (asset, offer) ->
+        GroupOfferDialog(
+            offer = offer,
+            deviceName = "“${asset.name}”",
+            separateLabel = "Just move it",
+            onJoin = { name ->
+                moveOffer = null
+                vm.joinLocation(asset, offer, name)
+                Toast.makeText(context, "Added to the location", Toast.LENGTH_SHORT).show()
+            },
+            onSeparate = {
+                moveOffer = null
+                vm.savePinMove()
+                Toast.makeText(context, "Pin position saved", Toast.LENGTH_SHORT).show()
+            },
+            onDismiss = { moveOffer = null },
+        )
+    }
+
+    addDeviceTo?.let { place ->
+        AssetTypePickerDialog(
+            title = "Add device to ${place.name}",
+            subtitle = null,
+            types = AssetType.entries - AssetType.LOCATION,
+            onPick = { type ->
+                addDeviceTo = null
+                scope.launch {
+                    onOpenAsset(vm.createAsset(type, place.point(), place.accuracy, place.altitude, groupUid = place.uid))
+                }
+            },
+            onDismiss = { addDeviceTo = null },
+        )
+    }
+
+    if (showCombine) {
+        CombineStackedDialog(
+            clusters = remember { vm.stackedPins() },
+            onCombine = { pins, name -> vm.combineIntoLocation(pins, name) },
+            onDismiss = { showCombine = false },
         )
     }
 
@@ -993,6 +1094,9 @@ private fun PinMoveBar(
 @Composable
 private fun AssetCard(
     asset: Asset,
+    inLocation: Asset?,
+    onOpenLocation: (Asset) -> Unit,
+    onTakeOut: () -> Unit,
     location: Location?,
     onEdit: () -> Unit,
     onNavigate: () -> Unit,
@@ -1037,6 +1141,11 @@ private fun AssetCard(
             if (asset.notes.isNotBlank()) {
                 Text(asset.notes, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
+            if (inLocation != null) {
+                TextButton(onClick = { onOpenLocation(inLocation) }) {
+                    Text("${AssetType.LOCATION.glyph} In ${inLocation.name} – show all devices there")
+                }
+            }
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilledTonalButton(onClick = onEdit) {
                     Icon(Icons.Default.Edit, null)
@@ -1048,10 +1157,19 @@ private fun AssetCard(
                     Spacer(Modifier.width(4.dp))
                     Text("Navigate")
                 }
-                OutlinedButton(onClick = onMove) {
-                    Icon(Icons.Default.OpenWith, null)
-                    Spacer(Modifier.width(4.dp))
-                    Text("Move")
+                if (inLocation != null) {
+                    // Devices move with their location; taking one out makes it a separate pin again.
+                    OutlinedButton(onClick = onTakeOut) {
+                        Icon(Icons.Default.OpenWith, null)
+                        Spacer(Modifier.width(4.dp))
+                        Text("Take out")
+                    }
+                } else {
+                    OutlinedButton(onClick = onMove) {
+                        Icon(Icons.Default.OpenWith, null)
+                        Spacer(Modifier.width(4.dp))
+                        Text("Move")
+                    }
                 }
             }
             if (asset.type.bssidField != null) {
@@ -1078,6 +1196,196 @@ private fun AssetCard(
             if (live != null) UnifiLiveSection(live, onRefreshLive)
         }
     }
+}
+
+/** A closet / rack holding several devices, shown as one pin. */
+@Composable
+private fun LocationCard(
+    place: Asset,
+    members: List<Asset>,
+    location: Location?,
+    onOpenMember: (Asset) -> Unit,
+    onAddDevice: () -> Unit,
+    onDetails: () -> Unit,
+    onNavigate: () -> Unit,
+    onMove: () -> Unit,
+    onClose: () -> Unit,
+) {
+    Card(Modifier.fillMaxWidth(), elevation = CardDefaults.cardElevation(6.dp)) {
+        Column(Modifier.padding(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TypeBadge(place.type, 36.dp)
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(place.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        "Location • ${members.size} device${if (members.size == 1) "" else "s"}",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                IconButton(onClick = onClose) { Icon(Icons.Default.Close, "Close") }
+            }
+            if (location != null) {
+                val me = GeoPt(location.latitude, location.longitude)
+                val dist = Geo.distanceMeters(me, place.point())
+                val bearing = Geo.bearingDegrees(me, place.point())
+                Text(
+                    "${Geo.formatDistance(dist)} ${Geo.compassPoint(bearing)} (${bearing.toInt()}°) from you",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                )
+            }
+            if (place.notes.isNotBlank()) {
+                Text(place.notes, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+            Column(
+                Modifier
+                    .heightIn(max = 220.dp)
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                if (members.isEmpty()) {
+                    Text("No devices here yet – add the router, switches and APs.", style = MaterialTheme.typography.bodySmall)
+                }
+                members.forEach { m ->
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable { onOpenMember(m) }
+                            .padding(vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        TypeBadge(m.type, 28.dp)
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(m.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text("${m.type.label} • ${m.status}", style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+            }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilledTonalButton(onClick = onAddDevice) {
+                    Icon(Icons.Default.Add, null)
+                    Spacer(Modifier.width(4.dp))
+                    Text("Add device")
+                }
+                FilledTonalButton(onClick = onDetails) {
+                    Icon(Icons.Default.Edit, null)
+                    Spacer(Modifier.width(4.dp))
+                    Text("Details")
+                }
+                FilledTonalButton(onClick = onNavigate) {
+                    Icon(Icons.Default.Directions, null)
+                    Spacer(Modifier.width(4.dp))
+                    Text("Navigate")
+                }
+                OutlinedButton(onClick = onMove) {
+                    Icon(Icons.Default.OpenWith, null)
+                    Spacer(Modifier.width(4.dp))
+                    Text("Move")
+                }
+            }
+        }
+    }
+}
+
+/** Asks whether a pin being placed / moved should share a nearby location (or start one with a lone pin). */
+@Composable
+private fun GroupOfferDialog(
+    offer: GroupOffer,
+    deviceName: String,
+    separateLabel: String,
+    onJoin: (String) -> Unit,
+    onSeparate: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var name by remember { mutableStateOf("") }
+    val dist = Geo.formatDistance(offer.distanceM)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (offer.joinsExisting) "Add to ${offer.target.name}?" else "Same location?") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (offer.joinsExisting) {
+                    Text("“${offer.target.name}” is $dist away. Put $deviceName in it? It will show on that location's pin instead of its own.")
+                } else {
+                    Text(
+                        "“${offer.target.name}” (${offer.target.type.label}) is $dist away. " +
+                            "Put $deviceName and it together in one location, shown as a single pin?",
+                    )
+                    OutlinedTextField(
+                        value = name,
+                        onValueChange = { name = it },
+                        label = { Text("Location name") },
+                        placeholder = { Text("e.g. IDF-2 closet, Rack A") },
+                        singleLine = true,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onJoin(name) }) { Text(if (offer.joinsExisting) "Add to location" else "Create location") }
+        },
+        dismissButton = { TextButton(onClick = onSeparate) { Text(separateLabel) } },
+    )
+}
+
+/** Lists pins sitting on top of each other and puts each stack into a named location. */
+@Composable
+private fun CombineStackedDialog(
+    clusters: List<List<Asset>>,
+    onCombine: (List<Asset>, String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var remaining by remember { mutableStateOf(clusters) }
+    val names = remember { mutableStateOf(mapOf<Int, String>()) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Combine stacked pins") },
+        text = {
+            Column(
+                Modifier
+                    .heightIn(max = 480.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                if (remaining.isEmpty()) {
+                    Text("No pins within a few metres of each other in this site.")
+                } else {
+                    Text(
+                        "These pins are within a few metres of each other. Combine each group into one location pin.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                remaining.forEachIndexed { i, pins ->
+                    val key = pins.first().id.toInt()
+                    Card(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            pins.forEach { p ->
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    TypeBadge(p.type, 22.dp)
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(p.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                            }
+                            OutlinedTextField(
+                                value = names.value[key] ?: "",
+                                onValueChange = { v -> names.value = names.value + (key to v) },
+                                label = { Text("Location name") },
+                                placeholder = { Text("e.g. IDF-2 closet") },
+                                singleLine = true,
+                            )
+                            FilledTonalButton(onClick = {
+                                onCombine(pins, names.value[key] ?: "")
+                                remaining = remaining.filterIndexed { j, _ -> j != i }
+                            }) { Text("Combine ${pins.size} pins") }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } },
+    )
 }
 
 @Composable

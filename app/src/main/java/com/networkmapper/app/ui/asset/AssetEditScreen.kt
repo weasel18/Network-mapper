@@ -201,8 +201,18 @@ class AssetEditViewModel(app: Application, handle: SavedStateHandle) : AndroidVi
             accuracy = if (moved && f.accuracy == base.accuracy) null else f.accuracy,
             altitude = f.altitude,
             attributes = f.cleanedAttributes(),
+            // A device given its own coordinates (or turned into a location) leaves its location.
+            groupUid = if (moved || f.type == AssetType.LOCATION) "" else base.groupUid,
         )
         repo.updateAsset(updated)
+        if (base.type == AssetType.LOCATION) {
+            val members = repo.getGroupMembers(base)
+            if (updated.type != AssetType.LOCATION) {
+                members.forEachIndexed { i, m -> repo.removeFromLocation(m, 360.0 * i / members.size) }
+            } else if (moved) {
+                members.forEach { repo.updateAsset(it.copy(latitude = lat, longitude = lon, accuracy = updated.accuracy)) }
+            }
+        }
         original = updated
         originalForm = AssetForm.from(updated)
         form.value = originalForm
@@ -519,8 +529,12 @@ fun AssetEditScreen(
 
     if (confirmDelete) {
         ConfirmDialog(
-            title = "Delete pin?",
-            text = "This deletes the pin and its ${photos.size} photo(s). Paths connected to it are kept.",
+            title = if (form?.type == AssetType.LOCATION) "Delete location?" else "Delete pin?",
+            text = if (form?.type == AssetType.LOCATION) {
+                "This deletes the location and its ${photos.size} photo(s). The devices in it are kept and become separate pins again."
+            } else {
+                "This deletes the pin and its ${photos.size} photo(s). Paths connected to it are kept."
+            },
             confirm = "Delete",
             onConfirm = {
                 scope.launch {

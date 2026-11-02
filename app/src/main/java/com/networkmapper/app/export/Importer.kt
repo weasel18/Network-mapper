@@ -229,6 +229,7 @@ object Importer {
 
         // ---- Pins ----
         var assetCount = 0
+        val pendingLocations = ArrayList<Pair<Long, String>>() // new pin id -> "<siteKey>:<old location id>"
         for (f in c.features) {
             val props = f.optJSONObject("properties") ?: continue
             if (props.optString("featureType") != "asset") continue
@@ -267,8 +268,16 @@ object Importer {
             val newId = repo.insertAsset(asset)
             inSite += asset.copy(id = newId)
             if (oldId >= 0) assetIdMap["$key:$oldId"] = newId
+            props.optNullableLong("locationId")?.let { pendingLocations += newId to "$key:$it" }
             assetCount++
             photoCount += attachPhotos(repo, props.optJSONArray("photos"), photoNames, c.photoIndex, assetId = newId, pathId = null, fallback = GeoPt(lat, lon))
+        }
+
+        // Devices back into their locations (closet / rack pins), now that every pin has a new id.
+        for ((pinId, locKey) in pendingLocations) {
+            val location = assetIdMap[locKey]?.let { repo.getAsset(it) } ?: continue
+            val pin = repo.getAsset(pinId) ?: continue
+            repo.updateAsset(pin.copy(groupUid = location.uid))
         }
 
         // ---- Paths ----

@@ -10,7 +10,10 @@ import com.networkmapper.app.data.AppDatabase
 import com.networkmapper.app.data.Asset
 import com.networkmapper.app.data.AssetType
 import com.networkmapper.app.data.DEFAULT_SITE_ID
+import com.networkmapper.app.data.GROUP_OFFER_RADIUS_M
 import com.networkmapper.app.data.GeoPt
+import com.networkmapper.app.data.isLocation
+import com.networkmapper.app.data.point
 import com.networkmapper.app.data.NetPath
 import com.networkmapper.app.data.NetworkSummary
 import com.networkmapper.app.data.PathKind
@@ -90,6 +93,14 @@ data class PinMove(
     val accuracy: Float?,
     val altitude: Double?,
 )
+
+/**
+ * A pin near where a device is being placed or moved: either a location (closet / rack) it can join,
+ * or a lone device it can share a new location with.
+ */
+data class GroupOffer(val target: Asset, val distanceM: Double) {
+    val joinsExisting: Boolean get() = target.isLocation
+}
 
 /** Which end of the route new points (taps, GPS points, auto-track) are added to. */
 enum class DraftEnd { END, START }
@@ -729,7 +740,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // ---------- Assets ----------
-    suspend fun createAsset(type: AssetType, pt: GeoPt, accuracy: Float? = null, altitude: Double? = null): Long {
+    suspend fun createAsset(
+        type: AssetType,
+        pt: GeoPt,
+        accuracy: Float? = null,
+        altitude: Double? = null,
+        groupUid: String = "",
+    ): Long {
         val count = assets.value.count { it.type == type } + 1
         val glyphName = type.label.substringBefore(" /").substringBefore(" (")
         return repo.insertAsset(
@@ -741,8 +758,90 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 accuracy = accuracy,
                 altitude = altitude,
                 siteId = currentSiteId.value,
+                groupUid = groupUid,
             ),
         )
+    }
+
+    // ---------- Locations: several devices in one closet / rack, shown as one pin ----------
+
+    /** The location pin [a] sits in, if any. */
+    fun locationOf(a: Asset): Asset? =
+        a.groupUid.takeIf { it.isNotEmpty() }?.let { u -> assets.value.firstOrNull { it.uid == u && it.isLocation } }
+
+    fun membersOf(location: Asset): List<Asset> =
+        assets.value.filter { it.groupUid == location.uid && !it.isLocation }.sortedWith(compareBy({ it.type.ordinal }, { it.name }))
+
+    /**
+     * Finds a location, or a lone device, close to [pt] that a device being placed / moved could share.
+     * Existing locations win over lone pins.
+     */
+    fun groupOfferFor(pt: GeoPt, moving: Asset? = null): GroupOffer? {
+        if (moving?.isLocation == true) return null
+        val candidates = assets.value.filter { a ->
+            a.id != moving?.id && (a.isLocation || locationOf(a) == null) && a.uid != moving?.groupUid
+        }.map { it to Geo.distanceMeters(pt, it.point()) }.filter { it.second <= GROUP_OFFER_RADIUS_M }
+        val best = candidates.filter { it.first.isLocation }.minByOrNull { it.second } ?: candidates.minByOrNull { it.second }
+        return best?.let { GroupOffer(it.first, it.second) }
+    }
+
+    /** Creates a location at [other]'s position and puts [other] in it. */
+    suspend fun createLocationWith(other: Asset, name: String): Asset {
+        val id = repo.insertAsset(
+            Asset(
+                type = AssetType.LOCATION,
+                name = name.trim().ifEmpty { "Location ${assets.value.count { it.isLocation } + 1}" },
+                latitude = other.latitude,
+                longitude = other.longitude,
+                accuracy = other.accuracy,
+                altitude = other.altitude,
+                siteId = currentSiteId.value,
+            ),
+        )
+        val location = repo.getAsset(id)!!
+        repo.addToLocation(other, location)
+        return location
+    }
+
+    /** New device pin inside a location (or a new location shared with a lone pin). */
+    suspend fun createAssetIn(type: AssetType, offer: GroupOffer, newLocationName: String): Long {
+        val location = if (offer.joinsExisting) offer.target else createLocationWith(offer.target, newLocationName)
+        return createAsset(type, location.point(), location.accuracy, location.altitude, groupUid = location.uid)
+    }
+
+    /** Puts an existing device into the offered location (or a new one shared with a lone pin). */
+    fun joinLocation(device: Asset, offer: GroupOffer, newLocationName: String) = viewModelScope.launch {
+        val location = if (offer.joinsExisting) offer.target else createLocationWith(offer.target, newLocationName)
+        repo.getAsset(device.id)?.let { repo.addToLocation(it, location) }
+        pinMove.value = null
+        selected.value = Selection.AssetSel(location.id)
+    }
+
+    fun removeFromLocation(device: Asset) = viewModelScope.launch {
+        repo.getAsset(device.id)?.let { repo.removeFromLocation(it) }
+    }
+
+    /** Lone pins (not in a location) that sit within a few metres of each other, biggest groups first. */
+    fun stackedPins(): List<List<Asset>> {
+        val lone = assets.value.filter { !it.isLocation && locationOf(it) == null }
+        val parent = IntArray(lone.size) { it }
+        fun find(i: Int): Int {
+            var x = i
+            while (parent[x] != x) x = parent[x]
+            return x
+        }
+        for (i in lone.indices) for (j in i + 1 until lone.size) {
+            if (Geo.distanceMeters(lone[i].point(), lone[j].point()) <= GROUP_OFFER_RADIUS_M) parent[find(i)] = find(j)
+        }
+        return lone.indices.groupBy { find(it) }.values.filter { it.size > 1 }
+            .map { idx -> idx.map { lone[it] } }.sortedByDescending { it.size }
+    }
+
+    /** Puts [pins] into one new location, placed at the most accurately located pin. */
+    fun combineIntoLocation(pins: List<Asset>, name: String) = viewModelScope.launch {
+        val anchor = pins.minByOrNull { it.accuracy ?: Float.MAX_VALUE } ?: return@launch
+        val location = createLocationWith(anchor, name)
+        pins.filter { it.id != anchor.id }.forEach { p -> repo.getAsset(p.id)?.let { repo.addToLocation(it, location) } }
     }
 
     // ---------- Pin move mode ----------
@@ -750,6 +849,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun startPinMove(asset: Asset) {
         draft.value = null
+        spotInfo.value = null
         selected.value = Selection.AssetSel(asset.id)
         val pt = GeoPt(asset.latitude, asset.longitude)
         pinMove.value = PinMove(asset.id, asset.name, pt, pt, asset.accuracy, asset.altitude)
@@ -779,9 +879,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun savePinMove() = viewModelScope.launch {
         val m = pinMove.value ?: return@launch
         repo.getAsset(m.assetId)?.let {
-            repo.updateAsset(
-                it.copy(latitude = m.current.lat, longitude = m.current.lon, accuracy = m.accuracy, altitude = m.altitude),
-            )
+            if (it.isLocation) {
+                repo.moveLocation(it, m.current, m.accuracy, m.altitude) // its devices move with it
+            } else {
+                repo.updateAsset(
+                    it.copy(latitude = m.current.lat, longitude = m.current.lon, accuracy = m.accuracy, altitude = m.altitude),
+                )
+            }
         }
         pinMove.value = null
     }

@@ -63,6 +63,13 @@ interface AssetDao {
     @Delete
     suspend fun delete(asset: Asset)
 
+    @Query("SELECT * FROM assets WHERE uid = :uid")
+    suspend fun getByUid(uid: String): Asset?
+
+    /** Devices inside a location pin. */
+    @Query("SELECT * FROM assets WHERE groupUid = :groupUid AND groupUid != '' ORDER BY type, name")
+    suspend fun getMembers(groupUid: String): List<Asset>
+
     @Query("DELETE FROM assets WHERE siteId = :siteId")
     suspend fun deleteForSite(siteId: Long)
 }

@@ -18,6 +18,7 @@ import com.networkmapper.app.data.CoveragePattern
 import com.networkmapper.app.data.PatternType
 import com.networkmapper.app.data.GeoPt
 import com.networkmapper.app.data.NetPath
+import com.networkmapper.app.data.isLocation
 import com.networkmapper.app.ui.Draft
 import com.networkmapper.app.ui.HeatPoint
 import com.networkmapper.app.ui.MapSettings
@@ -133,14 +134,22 @@ class MapOverlayController(private val context: Context, val mapView: MapView) {
         overlays.clear()
         overlays.add(events)
         overlays.add(touchWatcher)
+        // Devices inside a location (closet / rack) are drawn as part of the location's pin.
+        val locations = assets.filter { it.isLocation }.associateBy { it.uid }
+        val membersOf = assets.filter { !it.isLocation && it.groupUid in locations }.groupBy { it.groupUid }
+        fun shownPoint(a: Asset): GeoPt {
+            val holder = if (!a.isLocation) locations[a.groupUid] ?: a else a
+            val moving = pinMove?.takeIf { it.assetId == holder.id }
+            return moving?.current ?: GeoPt(holder.latitude, holder.longitude)
+        }
         if (settings.showPatterns && settings.showAssets) {
             val selectedAssetId = (selected as? Selection.AssetSel)?.id
             patterns.items = assets.filter { it.type !in settings.hiddenTypes }.mapNotNull { a ->
                 val pattern = Coverage.read(a.attributes) ?: return@mapNotNull null
-                val moving = pinMove?.takeIf { it.assetId == a.id }
+                val at = shownPoint(a)
                 PatternOverlay.Item(
-                    lat = moving?.current?.lat ?: a.latitude,
-                    lon = moving?.current?.lon ?: a.longitude,
+                    lat = at.lat,
+                    lon = at.lon,
                     pattern = pattern,
                     color = a.type.colorArgb.toInt(),
                     selected = a.id == selectedAssetId,
@@ -162,13 +171,20 @@ class MapOverlayController(private val context: Context, val mapView: MapView) {
             val selectedAssetId = (selected as? Selection.AssetSel)?.id
             // Pins can only be dragged in explicit Move mode, and only the pin being moved.
             assets.filter { it.type !in settings.hiddenTypes || it.id == pinMove?.assetId }.forEach {
+                if (!it.isLocation && it.groupUid in locations) return@forEach // drawn inside its location
                 val moving = pinMove?.assetId == it.id
                 val shown = if (moving && pinMove != null) {
                     it.copy(latitude = pinMove.current.lat, longitude = pinMove.current.lon)
                 } else {
                     it
                 }
-                overlays.add(buildMarker(shown, it.id == selectedAssetId || moving, draggable = moving))
+                if (it.isLocation) {
+                    val members = membersOf[it.uid].orEmpty()
+                    val sel = it.id == selectedAssetId || moving || members.any { m -> m.id == selectedAssetId }
+                    overlays.add(buildLocationMarker(shown, members.filter { m -> m.type !in settings.hiddenTypes }, sel, draggable = moving))
+                } else {
+                    overlays.add(buildMarker(shown, it.id == selectedAssetId || moving, draggable = moving))
+                }
             }
         }
         // Above the pins so route vertices can be grabbed; taps elsewhere still reach pins (to snap).
@@ -217,6 +233,104 @@ class MapOverlayController(private val context: Context, val mapView: MapView) {
             })
         }
         return m
+    }
+
+    private fun buildLocationMarker(location: Asset, members: List<Asset>, selected: Boolean, draggable: Boolean): Marker {
+        val m = Marker(mapView)
+        m.position = GeoPoint(location.latitude, location.longitude)
+        val (drawable, anchorY) = locationIcon(location.name, members, selected)
+        m.icon = drawable
+        m.setAnchor(Marker.ANCHOR_CENTER, anchorY)
+        m.title = location.name
+        m.isDraggable = draggable
+        m.setOnMarkerClickListener { _, _ ->
+            onAssetClick(location)
+            true
+        }
+        if (draggable) {
+            m.setOnMarkerDragListener(object : Marker.OnMarkerDragListener {
+                override fun onMarkerDrag(marker: Marker?) {}
+                override fun onMarkerDragStart(marker: Marker?) {}
+                override fun onMarkerDragEnd(marker: Marker?) {
+                    val p = marker?.position ?: return
+                    onAssetDragged(location, GeoPt(p.latitude, p.longitude))
+                }
+            })
+        }
+        return m
+    }
+
+    private val locationIcons = HashMap<String, Pair<Drawable, Float>>()
+
+    /** One rounded pin with a coloured chip per device type, e.g. [R] [W×2] [A], and the location name below. */
+    private fun locationIcon(name: String, members: List<Asset>, selected: Boolean): Pair<Drawable, Float> {
+        val chips = LocationChips.of(members)
+        val label = if (name.length > 20) name.take(19) + "…" else name
+        val key = "$label|${chips.joinToString { "${it.text}:${it.color}" }}|$selected"
+        return locationIcons.getOrPut(key) { drawLocationIcon(label, chips, selected) }
+    }
+
+    private fun drawLocationIcon(label: String, chips: List<LocationChips.Chip>, selected: Boolean): Pair<Drawable, Float> {
+        val d = density
+        val chipH = 22f * d
+        val gap = 3f * d
+        val pad = 4f * d
+        val halo = if (selected) 5f * d else 0f
+        val chipPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            typeface = Typeface.DEFAULT_BOLD
+            textSize = 12.5f * d
+            textAlign = Paint.Align.CENTER
+        }
+        val widths = chips.map { maxOf(chipH, chipPaint.measureText(it.text) + 12f * d) }
+        val bodyW = pad * 2 + widths.sum() + gap * (widths.size - 1).coerceAtLeast(0)
+        val bodyH = chipH + pad * 2
+        val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            typeface = Typeface.DEFAULT_BOLD
+            textSize = 11f * d
+            textAlign = Paint.Align.CENTER
+        }
+        val labelW = labelPaint.measureText(label) + 8f * d
+        val w = maxOf(bodyW + halo * 2, labelW).toInt() + 2
+        val labelTop = halo * 2 + bodyH + 2f * d
+        val h = (labelTop + 15f * d).toInt()
+        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val c = Canvas(bmp)
+        val left = (w - bodyW) / 2f
+        val top = halo
+        val p = Paint(Paint.ANTI_ALIAS_FLAG)
+        if (selected) {
+            p.color = 0x88FFEB3B.toInt()
+            c.drawRoundRect(left - halo, top - halo, left + bodyW + halo, top + bodyH + halo, bodyH / 2 + halo, bodyH / 2 + halo, p)
+        }
+        p.color = 0x55000000
+        c.drawRoundRect(left, top + 1.5f * d, left + bodyW, top + bodyH + 1.5f * d, bodyH / 2, bodyH / 2, p)
+        p.color = 0xFFFFFFFF.toInt()
+        c.drawRoundRect(left, top, left + bodyW, top + bodyH, bodyH / 2, bodyH / 2, p)
+        p.style = Paint.Style.STROKE
+        p.strokeWidth = 2f * d
+        p.color = AssetType.LOCATION.colorArgb.toInt()
+        c.drawRoundRect(left + d, top + d, left + bodyW - d, top + bodyH - d, bodyH / 2 - d, bodyH / 2 - d, p)
+        p.style = Paint.Style.FILL
+        var x = left + pad
+        chips.forEachIndexed { i, chip ->
+            val cw = widths[i]
+            p.color = chip.color
+            c.drawRoundRect(x, top + pad, x + cw, top + pad + chipH, chipH / 2, chipH / 2, p)
+            chipPaint.color = 0xFFFFFFFF.toInt()
+            val ty = top + pad + chipH / 2 - (chipPaint.descent() + chipPaint.ascent()) / 2
+            c.drawText(chip.text, x + cw / 2, ty, chipPaint)
+            x += cw + gap
+        }
+        // Name with a white halo so it reads on any map.
+        val ly = labelTop - labelPaint.ascent()
+        labelPaint.style = Paint.Style.STROKE
+        labelPaint.strokeWidth = 3f * d
+        labelPaint.color = 0xFFFFFFFF.toInt()
+        c.drawText(label, w / 2f, ly, labelPaint)
+        labelPaint.style = Paint.Style.FILL
+        labelPaint.color = 0xFF263238.toInt()
+        c.drawText(label, w / 2f, ly, labelPaint)
+        return BitmapDrawable(context.resources, bmp) to (top + bodyH / 2) / h
     }
 
     private fun icon(type: AssetType, selected: Boolean): Drawable =
@@ -547,5 +661,25 @@ class MyLocationOverlay(private val density: Float) : Overlay() {
         }
         c.drawCircle(x, y, 9 * density, white)
         c.drawCircle(x, y, 6.5f * density, blue)
+    }
+}
+
+/** The chips on a location pin: one per device type, most important first, e.g. R, W×2, A. */
+object LocationChips {
+    data class Chip(val text: String, val color: Int)
+
+    private val priority = listOf(
+        AssetType.ROUTER, AssetType.SWITCH, AssetType.ACCESS_POINT, AssetType.WIRELESS_BRIDGE, AssetType.FDH,
+        AssetType.SPLICE, AssetType.FIBER_JUNCTION, AssetType.SLACK_LOOP, AssetType.BUILDING_ENTRY, AssetType.POLE, AssetType.OTHER,
+    )
+    private const val MAX = 4
+
+    fun of(members: List<Asset>): List<Chip> {
+        if (members.isEmpty()) return listOf(Chip(AssetType.LOCATION.glyph, AssetType.LOCATION.colorArgb.toInt()))
+        val byType = members.groupBy { it.type }.toList().sortedBy { (t, _) -> priority.indexOf(t).let { if (it < 0) 99 else it } }
+        val chips = byType.map { (t, list) -> Chip(if (list.size > 1) "${t.glyph}×${list.size}" else t.glyph, t.colorArgb.toInt()) }
+        if (chips.size <= MAX) return chips
+        val rest = byType.drop(MAX - 1).sumOf { it.second.size }
+        return chips.take(MAX - 1) + Chip("+$rest", 0xFF607D8B.toInt())
     }
 }

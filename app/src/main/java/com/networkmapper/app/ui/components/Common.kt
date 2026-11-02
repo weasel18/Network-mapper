@@ -90,7 +90,13 @@ fun KindSwatch(kind: PathKind, colorArgb: Long? = null) {
 }
 
 @Composable
-fun AssetTypePickerDialog(title: String, subtitle: String?, onPick: (AssetType) -> Unit, onDismiss: () -> Unit) {
+fun AssetTypePickerDialog(
+    title: String,
+    subtitle: String?,
+    onPick: (AssetType) -> Unit,
+    onDismiss: () -> Unit,
+    types: List<AssetType> = AssetType.entries,
+) {
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
@@ -98,7 +104,7 @@ fun AssetTypePickerDialog(title: String, subtitle: String?, onPick: (AssetType) 
             Column {
                 if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.bodySmall)
                 LazyColumn(Modifier.heightIn(max = 420.dp)) {
-                    items(AssetType.entries) { t ->
+                    items(types) { t ->
                         Row(
                             Modifier
                                 .fillMaxWidth()

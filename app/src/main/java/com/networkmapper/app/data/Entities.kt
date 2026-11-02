@@ -61,8 +61,16 @@ enum class AssetType(
         "Building entry / Demarc", 0xFFD81B60, "D",
         listOf("Address", "Room / Location", "Contact", "Demarc type"),
     ),
+    /** A place that holds several devices (closet, rack, cabinet). Its devices are drawn as one pin. */
+    LOCATION(
+        "Location / Closet / Rack", 0xFF37474F, "▣",
+        listOf("Building / Floor", "Room", "Rack / Cabinet", "Access / Keys", "Power / UPS", "Contact"),
+    ),
     OTHER("Other / Photo pin", 0xFF757575, "?", emptyList()),
 }
+
+/** Devices dropped or moved within this distance of another pin are offered to share its location. */
+const val GROUP_OFFER_RADIUS_M = 6.0
 
 /** A job / location. Every pin, path and Wi-Fi survey belongs to exactly one site. */
 fun newUid(): String = java.util.UUID.randomUUID().toString()
@@ -111,9 +119,12 @@ data class Asset(
     val uid: String = newUid(),
     /** True when changed on this phone and not yet pushed to the sync server. */
     val dirty: Boolean = true,
+    /** uid of the LOCATION pin this device sits in ("" = its own pin). Its position follows the location. */
+    @ColumnInfo(defaultValue = "") val groupUid: String = "",
 )
 
 fun Asset.point(): GeoPt = GeoPt(latitude, longitude)
+val Asset.isLocation: Boolean get() = type == AssetType.LOCATION
 
 enum class PathKind(
     val label: String,
