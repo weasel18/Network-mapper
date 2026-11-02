@@ -47,32 +47,69 @@ data class WifiFilter(
     }
 }
 
-/** Persists the filter (shared by every site) and tracks whether it still needs to be synced. */
+/**
+ * Persists one filter per site (keyed by site uid) and tracks which still need to be synced.
+ * Before filters were per site there was one shared filter; it is copied into every site once.
+ */
 class WifiFilterStore(context: Context, name: String = "wifi_filter") {
     private val prefs = context.applicationContext.getSharedPreferences(name, Context.MODE_PRIVATE)
-    private val _filter = MutableStateFlow(
-        try {
-            WifiFilter.fromJson(prefs.getString("filter", null)?.let { JSONObject(it) })
-        } catch (e: Exception) {
-            WifiFilter()
-        },
-    )
-    val filter: StateFlow<WifiFilter> = _filter.asStateFlow()
 
-    val updatedAt: Long get() = prefs.getLong("updatedAt", 0)
-    val dirty: Boolean get() = prefs.getBoolean("dirty", false)
-
-    private fun save(f: WifiFilter, u: Long, dirty: Boolean) {
-        prefs.edit().putString("filter", f.toJson().toString()).putLong("updatedAt", u).putBoolean("dirty", dirty).commit()
-        _filter.value = f
+    private fun parse(json: String?): WifiFilter = try {
+        WifiFilter.fromJson(json?.let { JSONObject(it) })
+    } catch (e: Exception) {
+        WifiFilter()
     }
 
-    fun update(block: (WifiFilter) -> WifiFilter) = save(block(_filter.value), System.currentTimeMillis(), true)
+    private val _all = MutableStateFlow(
+        prefs.all.keys.filter { it.startsWith("f:") }.associate { k -> k.removePrefix("f:") to parse(prefs.getString(k, null)) },
+    )
 
-    /** A newer filter from the sync server. */
-    fun applyRemote(f: WifiFilter, u: Long) = save(f, u, false)
+    /** Every site's filter, by site uid. A site without an entry maps everything. */
+    val all: StateFlow<Map<String, WifiFilter>> = _all.asStateFlow()
 
-    fun markSent(u: Long) {
-        if (updatedAt == u) prefs.edit().putBoolean("dirty", false).apply()
+    fun filterFor(siteUid: String): WifiFilter = _all.value[siteUid] ?: WifiFilter()
+    fun updatedAt(siteUid: String): Long = prefs.getLong("u:$siteUid", 0)
+    fun isDirty(siteUid: String): Boolean = prefs.getBoolean("d:$siteUid", false)
+    fun dirtySites(): List<String> = _all.value.keys.filter { isDirty(it) }
+
+    @Synchronized
+    private fun save(siteUid: String, f: WifiFilter, u: Long, dirty: Boolean) {
+        prefs.edit().putString("f:$siteUid", f.toJson().toString()).putLong("u:$siteUid", u).putBoolean("d:$siteUid", dirty).commit()
+        _all.value = _all.value + (siteUid to f)
+    }
+
+    fun update(siteUid: String, block: (WifiFilter) -> WifiFilter) {
+        if (siteUid.isEmpty()) return
+        save(siteUid, block(filterFor(siteUid)), System.currentTimeMillis(), true)
+    }
+
+    /** A newer filter for a site from the sync server. */
+    fun applyRemote(siteUid: String, f: WifiFilter, u: Long) = save(siteUid, f, u, false)
+
+    fun markSent(siteUid: String, u: Long) {
+        if (updatedAt(siteUid) == u) prefs.edit().putBoolean("d:$siteUid", false).apply()
+    }
+
+    /** The old shared filter on this phone, if it hasn't been copied into the sites yet. */
+    val legacy: WifiFilter?
+        get() = prefs.getString("filter", null)?.let { parse(it) }?.takeIf { !it.isEmpty }
+
+    /**
+     * Copies a shared (pre per-site) filter into each of [siteUids] that has no filter of its own.
+     * [dirty] = push the copies (this phone's own old filter); false for one that came from the server.
+     */
+    @Synchronized
+    fun adoptShared(f: WifiFilter, siteUids: Collection<String>, u: Long, dirty: Boolean) {
+        if (f.isEmpty) return
+        siteUids.filter { it.isNotEmpty() && it !in _all.value }.forEach { save(it, f, u, dirty) }
+    }
+
+    /** Copies this phone's old shared filter into every site once, then forgets it. */
+    @Synchronized
+    fun migrateLegacy(siteUids: Collection<String>) {
+        if (siteUids.isEmpty()) return
+        // Keep the old filter's own timestamp so a newer per-site filter (set elsewhere) always wins.
+        legacy?.let { adoptShared(it, siteUids, prefs.getLong("updatedAt", 1L).coerceAtLeast(1L), dirty = true) }
+        prefs.edit().remove("filter").remove("updatedAt").remove("dirty").commit()
     }
 }

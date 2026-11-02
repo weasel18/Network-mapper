@@ -205,12 +205,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------- Wi-Fi filter (which networks to record and show) ----------
     private val filterStore = (app as NetworkMapperApp).wifiFilter
-    val wifiFilter: StateFlow<WifiFilter> = filterStore.filter
+
+    /** The open site's Wi-Fi filter (each site has its own). */
+    val wifiFilter: StateFlow<WifiFilter> by lazy {
+        combine(currentSite, filterStore.all) { site, all -> site?.uid?.let { all[it] } ?: WifiFilter() }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, WifiFilter())
+    }
 
     private fun allowed(ssid: String, bssid: String) = wifiFilter.value.allows(ssid, bssid)
 
     fun updateWifiFilter(block: (WifiFilter) -> WifiFilter) {
-        filterStore.update(block)
+        val uid = currentSite.value?.uid ?: return
+        filterStore.update(uid, block)
         (getApplication<Application>() as NetworkMapperApp).sync.requestSoon()
     }
 
@@ -270,6 +276,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         viewModelScope.launch { ensureValidSite() }
+        // Filters used to be shared by all sites: copy the old one into every site once.
+        viewModelScope.launch { filterStore.migrateLegacy(repo.getSites().map { it.uid }) }
         // The open site can disappear (deleted on another phone and synced): fall back to another.
         viewModelScope.launch {
             sites.collect { list ->

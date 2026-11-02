@@ -69,7 +69,9 @@ const S = {
   key: "", deviceId: "", deviceName: "",
   cursor: 0,
   sites: new Map(), assets: new Map(), paths: new Map(), photos: new Map(), sessions: new Map(),
-  apNames: new Map(), filter: { only: [], ssids: [], bssids: [], noName: false }, filterU: 0,
+  apNames: new Map(),
+  filters: new Map(), // site uid -> { f, u }: each site's Wi-Fi filter
+  legacyFilter: null, // { f, u }: the old filter shared by all sites, until it's copied into each site
   site: "", selected: null, // {c:"assets"|"paths", id}
   mode: null, // null | "add-pin" | "draw" | "edit-route" | "move-pin"
   draft: null, // { kind, points:[[lat,lon]], startAsset, endAsset, editing: uid|null }
@@ -92,7 +94,12 @@ async function api(method, path, body, raw = false) {
 function applyChange(ch) {
   const map = { sites: S.sites, assets: S.assets, paths: S.paths, photos: S.photos, sessions: S.sessions, ap_names: S.apNames }[ch.c];
   if (ch.c === "settings") {
-    if (ch.id === "wifi_filter" && !ch.d && ch.u >= S.filterU) { S.filter = Object.assign({ only: [], ssids: [], bssids: [], noName: false }, ch.data); S.filterU = ch.u; }
+    const f = Object.assign({ only: [], ssids: [], bssids: [], noName: false }, ch.data);
+    if (ch.id === "wifi_filter") { if (!S.legacyFilter || ch.u >= S.legacyFilter.u) S.legacyFilter = ch.d ? null : { f, u: ch.u }; }
+    else if (ch.id.startsWith("wifi_filter:")) {
+      const site = ch.id.slice("wifi_filter:".length), old = S.filters.get(site);
+      if (!old || ch.u >= old.u) { if (ch.d) S.filters.delete(site); else S.filters.set(site, { f, u: ch.u }); }
+    }
     return;
   }
   if (!map) return;
@@ -842,8 +849,21 @@ function openApNames() {
   panel().querySelectorAll("[data-del]").forEach((b) => (b.onclick = async () => { await push([tomb("ap_names", b.dataset.del, "")]); openApNames(); }));
 }
 
+const EMPTY_FILTER = { only: [], ssids: [], bssids: [], noName: false };
+/** The open site's Wi-Fi filter. */
+const siteFilter = (site = S.site) => S.filters.get(site)?.f || S.legacyFilter?.f || EMPTY_FILTER;
+/**
+ * Filters used to be shared by all sites. Copy the old shared one into every site that has no filter of its own,
+ * then delete it, so from now on each site's filter is separate.
+ */
+async function migrateSharedFilter() {
+  const old = S.legacyFilter;
+  if (!old) return;
+  const copies = [...S.sites.keys()].filter((uid) => !S.filters.has(uid)).map((uid) => change("settings", "wifi_filter:" + uid, uid, "", old.f));
+  await push([...copies, tomb("settings", "wifi_filter", "")]);
+}
 function filterAllows(ssid, bssid) {
-  const f = S.filter;
+  const f = siteFilter();
   if ((f.bssids || []).includes(String(bssid).toLowerCase())) return false;
   if (!ssid) return !f.noName && !(f.only || []).length;
   if ((f.ssids || []).includes(ssid)) return false;
@@ -851,10 +871,11 @@ function filterAllows(ssid, bssid) {
 }
 
 function openFilter() {
-  const f = S.filter;
+  const f = siteFilter();
   const list = (arr, key) => (arr || []).map((v) => `<span class="chip">${esc(key === "bssids" ? S.apNames.get(v)?.data.name || v : v)} <button data-rm="${key}" data-v="${esc(v)}">✕</button></span>`).join("") || '<span class="muted small">none</span>';
   openPanel(`<h2>Wi-Fi filter <button class="close" data-close>✕</button></h2>
-    <p class="muted small">Networks to leave out of mapping. Shared with every phone (they stop recording filtered networks).</p>
+    <p class="muted small">Networks to leave out of mapping in <b>${esc(S.sites.get(S.site)?.data.name || "this site")}</b> only.
+      Each site has its own filter; it syncs to the phones (they stop recording filtered networks in this site).</p>
     <h3>Only map these SSIDs</h3><div>${list(f.only, "only")}</div>
     <div class="grid2"><input id="w-only" placeholder="SSID"><button id="w-only-add">Add</button></div>
     <h3>Hidden SSIDs</h3><div>${list(f.ssids, "ssids")}</div>
@@ -862,7 +883,7 @@ function openFilter() {
     <h3>Hidden APs / BSSIDs</h3><div>${list(f.bssids, "bssids")}</div>
     <div class="grid2"><input id="w-bssid" placeholder="aa:bb:cc:dd:ee:ff"><button id="w-bssid-add">Hide</button></div>
     <p><label class="row"><input type="checkbox" id="w-noname" ${f.noName ? "checked" : ""}> Hide networks with no name</label></p>`);
-  const save = async (nf) => { await push([change("settings", "wifi_filter", "", "", nf)]); openFilter(); refreshHeat(); };
+  const save = async (nf) => { await push([change("settings", "wifi_filter:" + S.site, S.site, "", nf)]); openFilter(); refreshHeat(); };
   const add = (key, v) => { if (v) save({ ...f, [key]: [...new Set([...(f[key] || []), v])] }); };
   $("#w-only-add").onclick = () => add("only", $("#w-only").value.trim());
   $("#w-ssid-add").onclick = () => add("ssids", $("#w-ssid").value.trim());
@@ -1029,6 +1050,7 @@ async function start() {
   S.site = localStorage.getItem("nm.site") || "";
   $("#status").textContent = "Loading…";
   await pullAll();
+  try { await migrateSharedFilter(); } catch (e) { /* retried next time the page loads */ }
   render();
   openSiteView();
   // UniFi device status (only when the server has a UniFi cloud API key).

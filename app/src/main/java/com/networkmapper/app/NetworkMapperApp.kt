@@ -18,7 +18,7 @@ class NetworkMapperApp : Application() {
     lateinit var repository: Repository
         private set
 
-    /** Which Wi-Fi networks to record and show (shared by all sites, synced). */
+    /** Which Wi-Fi networks to record and show, per site (synced). */
     lateinit var wifiFilter: WifiFilterStore
         private set
 

@@ -42,7 +42,8 @@ poles and demarcs. It also maps Wi-Fi signal strength by GPS and attaches GPS-ta
   SSID, or to **only map** certain SSIDs. The filter button there reviews and undoes these, can hide networks with no
   name, and can remove already-recorded readings of filtered networks.
   - Filtered networks aren't recorded and are left out of the lists, the heatmap and suggestions.
-  - The filter applies to every site and syncs between phones (sync server 1.1+).
+  - Each site has its own filter (the one for the site that is open); it syncs between phones and the browser. A filter
+    set up before filters were per site is copied into every existing site once, so you can then trim each site separately.
 - **Antenna coverage patterns**: give an AP, bridge or router pin an **Omni**, **Sector** or **Directional / PtP**
   pattern with azimuth, beamwidth and range. It's drawn on the map in strong/good/weak bands (toggle in Layers).
   - Set azimuth with the slider or **Aim with phone**, which uses the compass corrected to true north.

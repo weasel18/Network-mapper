@@ -45,13 +45,14 @@ import kotlinx.coroutines.launch
 /** What to hide from a network row's 👁 menu. */
 enum class HideChoice { AP, SSID, ONLY_SSID }
 
-/** Review / edit which Wi-Fi networks are recorded and shown. Shared by all sites and synced. */
+/** Review / edit which Wi-Fi networks are recorded and shown in the open site (synced). */
 @Composable
 fun WifiFilterDialog(vm: MainViewModel, knownSsids: List<String>, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val filter by vm.wifiFilter.collectAsStateWithLifecycle()
     val names by vm.apNames.collectAsStateWithLifecycle()
+    val site by vm.currentSite.collectAsStateWithLifecycle()
     var allowMode by remember { mutableStateOf(filter.onlySsids.isNotEmpty()) }
     var custom by remember { mutableStateOf("") }
     var filteredCount by remember { mutableIntStateOf(0) }
@@ -71,7 +72,7 @@ fun WifiFilterDialog(vm: MainViewModel, knownSsids: List<String>, onDismiss: () 
             ) {
                 Text(
                     "Filtered networks aren't recorded in surveys and are left out of the lists, heatmap and suggestions. " +
-                        "Applies to every site and syncs to your other phones.",
+                        "Applies to this site only (${site?.name ?: "the open site"}) and syncs to your other phones.",
                     style = MaterialTheme.typography.bodySmall,
                 )
                 ChoiceRow(!allowMode, "Map all networks except the ones hidden below") {

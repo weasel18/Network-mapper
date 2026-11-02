@@ -54,7 +54,7 @@ class SyncEngine(
     private val siteFilter: Set<String>?,
     private val getCursor: () -> Long,
     private val setCursor: (Long) -> Unit,
-    /** Shared Wi-Fi filter (synced as a single "settings" record); null = not synced. */
+    /** Per-site Wi-Fi filters (synced as "settings" records "wifi_filter:<site uid>"); null = not synced. */
     private val filters: com.networkmapper.app.wifi.WifiFilterStore? = null,
 ) {
     private val sync = db.syncDao()
@@ -172,10 +172,13 @@ class SyncEngine(
             names.forEach { sync.apNameClean(it.bssid, it.updatedAt) }
         }
 
-        // Wi-Fi filter (one shared record)
-        filters?.takeIf { it.dirty }?.let { fs ->
-            val u = fs.updatedAt
-            send(listOf(change("settings", WIFI_FILTER_ID, "", "", u, fs.filter.value.toJson()))) { fs.markSent(u) }
+        // Wi-Fi filters, one record per site
+        filters?.let { fs ->
+            val siteUids = sites.map { it.uid }.toSet()
+            for (uid in fs.dirtySites().filter { it in siteUids }) {
+                val u = fs.updatedAt(uid)
+                send(listOf(change("settings", WIFI_FILTER_ID + ":" + uid, uid, "", u, fs.filterFor(uid).toJson()))) { fs.markSent(uid, u) }
+            }
         }
 
         // Deletes
@@ -487,7 +490,7 @@ class SyncEngine(
             }
             val d = ch.optJSONObject("data") ?: continue
             // Networks filtered out on this phone aren't stored.
-            if (filters?.filter?.value?.allows(d.optString("ssid"), d.optString("bssid")) == false) continue
+            if (filters?.filterFor(ch.optString("site"))?.allows(d.optString("ssid"), d.optString("bssid")) == false) continue
             rows += WifiReading(
                 sessionId = sessionId,
                 timestamp = d.optLong("t", ch.optLong("u")),
@@ -580,12 +583,23 @@ class SyncEngine(
         return true
     }
 
-    private fun applySettings(ch: JSONObject): Boolean {
+    private suspend fun applySettings(ch: JSONObject): Boolean {
         val fs = filters ?: return true
-        if (ch.optString("id") != WIFI_FILTER_ID || ch.optBoolean("d")) return true
+        val id = ch.optString("id")
+        if (ch.optBoolean("d")) return true
         val u = ch.optLong("u")
-        if (fs.updatedAt == u || (fs.dirty && fs.updatedAt >= u)) return true
-        fs.applyRemote(com.networkmapper.app.wifi.WifiFilter.fromJson(ch.optJSONObject("data")), u)
+        val f = com.networkmapper.app.wifi.WifiFilter.fromJson(ch.optJSONObject("data"))
+        if (id == WIFI_FILTER_ID) {
+            // The old shared filter (before filters were per site): sites without their own filter start from it.
+            fs.adoptShared(f, db.siteDao().getAll().map { it.uid }, u, dirty = false)
+            pulled++
+            return true
+        }
+        if (!id.startsWith("$WIFI_FILTER_ID:")) return true
+        val siteUid = id.removePrefix("$WIFI_FILTER_ID:")
+        val local = fs.updatedAt(siteUid)
+        if (local == u || (fs.isDirty(siteUid) && local >= u)) return true
+        fs.applyRemote(siteUid, f, u)
         pulled++
         return true
     }
