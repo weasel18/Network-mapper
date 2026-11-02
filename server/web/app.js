@@ -380,8 +380,8 @@ let heicLib = null;
 function loadHeicLib() {
   heicLib = heicLib || new Promise((ok, fail) => {
     const s = document.createElement("script");
-    s.src = "vendor/heic2any/heic2any.min.js";
-    s.onload = () => ok(window.heic2any);
+    s.src = "vendor/heic-to/heic-to.js"; // heic-to 1.6.6 (libheif 1.23)
+    s.onload = () => ok(window.HeicTo);
     s.onerror = () => { heicLib = null; fail(new Error("Couldn't load the HEIC converter")); };
     document.head.appendChild(s);
   });
@@ -396,8 +396,7 @@ async function heifToJpeg(blob) {
     const out = await new Promise((ok) => c.toBlob(ok, "image/jpeg", 0.88));
     if (out) return out;
   } catch (e) { /* not supported natively – fall through */ }
-  const out = await (await loadHeicLib())({ blob, toType: "image/jpeg", quality: 0.88 });
-  return Array.isArray(out) ? out[0] : out;
+  return (await loadHeicLib())({ blob, type: "image/jpeg", quality: 0.88 });
 }
 
 async function loadPhotoThumbs() {
@@ -438,7 +437,7 @@ function wirePhotoUpload(ownerKind, owner, site, pos) {
         })]);
       }
     } catch (e) {
-      alert(`Photo upload failed: ${e.message || e}`);
+      alert(`Photo upload failed: ${e && e.message ? e.message : e}`);
     }
     openDetails();
   };

@@ -91,7 +91,7 @@ the same access key (`SYNC_KEY`). Give the browser a name, such as "Office PC", 
 - **Map:** street, satellite and topographic layers, showing pins, routes and AP coverage patterns for the chosen site.
 - **Wi-Fi heatmap:** pick *strongest signal*, a single BSSID, or a pin (shows only that AP's radios).
 - **Pins:** **＋ Pin**, then click the map. Click a pin to edit its type, name, status, details, coverage pattern
-  and notes, add photos (iPhone HEIC photos are converted to JPEG), or delete it. **Move pin** lets you drag it.
+  and notes, add photos (HEIC photos are converted to JPEG), or delete it. **Move pin** lets you drag it.
 - **Routes:** **〰 Route**, choose the kind, then click the map. Clicking a pin snaps the route to it. Drag
   points to move them, and right-click (or Alt-click) a point to remove it. Then click **Finish**. **Edit / extend
   route** changes an existing route the same way.
