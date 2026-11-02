@@ -162,7 +162,7 @@ fun SitesScreen(vm: MainViewModel, onBack: () -> Unit, onOpened: () -> Unit, onO
                             overflow = TextOverflow.Ellipsis,
                         )
                         Text(
-                            "${s.pins} pins • ${s.paths} paths • ${s.surveys} surveys" + if (isCurrent) " • open" else "",
+                            "${s.pins} pins • ${s.paths} paths • ${s.surveys} surveys" + (if (s.site.home != null) " • start view set" else "") + if (isCurrent) " • open" else "",
                             style = MaterialTheme.typography.bodySmall,
                         )
                         if (s.site.notes.isNotBlank()) {

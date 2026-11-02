@@ -13,7 +13,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         Site::class, Asset::class, NetPath::class, Photo::class, SurveySession::class, WifiReading::class,
         ApName::class, SyncTombstone::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -107,6 +107,13 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** v5 -> v6: each site can have a start view (map position + zoom). */
+        val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                for (col in listOf("homeLat", "homeLon", "homeZoom")) db.execSQL("ALTER TABLE `sites` ADD COLUMN `$col` REAL")
+            }
+        }
+
         private val createCallback = object : RoomDatabase.Callback() {
             override fun onCreate(db: SupportSQLiteDatabase) {
                 insertDefaultSite(db)
@@ -115,7 +122,7 @@ abstract class AppDatabase : RoomDatabase() {
 
         /** Shared configuration, also used by tests with an in-memory builder. */
         fun configure(builder: RoomDatabase.Builder<AppDatabase>): RoomDatabase.Builder<AppDatabase> =
-            builder.addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5).addCallback(createCallback)
+            builder.addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6).addCallback(createCallback)
 
         fun build(context: Context): AppDatabase =
             configure(Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, "network_mapper.db"))

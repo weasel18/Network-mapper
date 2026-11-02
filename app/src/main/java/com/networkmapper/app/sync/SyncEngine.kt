@@ -95,7 +95,10 @@ class SyncEngine(
                 db.wifiDao().getSessionsForSite(s.id).isEmpty()
         }
         send(dirtySites.map { s ->
-            change("sites", s.uid, s.uid, "", s.updatedAt, JSONObject().put("name", s.name).put("notes", s.notes).put("createdAt", s.createdAt))
+            change(
+                "sites", s.uid, s.uid, "", s.updatedAt,
+                JSONObject().put("name", s.name).put("notes", s.notes).put("createdAt", s.createdAt).put("home", homeJson(s)),
+            )
         }) { dirtySites.forEach { sync.siteClean(it.uid, it.updatedAt) } }
 
         // Pins
@@ -198,6 +201,11 @@ class SyncEngine(
             if (page.isEmpty()) return
             handle(page)
         }
+    }
+
+    private fun homeJson(s: Site): Any {
+        val h = s.home ?: return JSONObject.NULL
+        return JSONObject().put("lat", h.lat).put("lon", h.lon).put("zoom", s.homeZoom ?: JSONObject.NULL)
     }
 
     private fun assetData(a: Asset) = JSONObject()
@@ -311,10 +319,24 @@ class SyncEngine(
         }
         if (!take(local != null, local?.updatedAt ?: 0, local?.dirty ?: false, u)) return
         val d = ch.optJSONObject("data") ?: JSONObject()
+        val home = d.optJSONObject("home")
+        val hLat = home?.optNullable("lat")
+        val hLon = home?.optNullable("lon")
+        val hZoom = home?.optNullable("zoom")
         if (local == null) {
-            sync.insertSite(Site(name = d.optString("name"), notes = d.optString("notes"), createdAt = d.optLong("createdAt", u), updatedAt = u, uid = uid, dirty = false))
+            sync.insertSite(
+                Site(
+                    name = d.optString("name"), notes = d.optString("notes"), createdAt = d.optLong("createdAt", u), updatedAt = u, uid = uid, dirty = false,
+                    homeLat = hLat, homeLon = hLon, homeZoom = hZoom,
+                ),
+            )
         } else {
-            sync.updateSite(local.copy(name = d.optString("name"), notes = d.optString("notes"), updatedAt = u, dirty = false))
+            sync.updateSite(
+                local.copy(
+                    name = d.optString("name"), notes = d.optString("notes"), updatedAt = u, dirty = false,
+                    homeLat = hLat, homeLon = hLon, homeZoom = hZoom,
+                ),
+            )
         }
         pulled++
     }

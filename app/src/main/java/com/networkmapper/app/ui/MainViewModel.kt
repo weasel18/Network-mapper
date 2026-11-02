@@ -310,6 +310,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     suspend fun createSite(name: String, notes: String = ""): Long =
         repo.insertSite(Site(name = name.trim().ifEmpty { "New site" }, notes = notes.trim()))
 
+    /** Saves where the map is now as the open site's start view. */
+    fun setSiteStartView(center: GeoPt, zoom: Double) = viewModelScope.launch {
+        val site = repo.getSite(currentSiteId.value) ?: return@launch
+        repo.updateSite(site.copy(homeLat = center.lat, homeLon = center.lon, homeZoom = zoom))
+    }
+
+    fun clearSiteStartView() = viewModelScope.launch {
+        val site = repo.getSite(currentSiteId.value) ?: return@launch
+        repo.updateSite(site.copy(homeLat = null, homeLon = null, homeZoom = null))
+    }
+
+    /** Jumps to the open site's start view (or fits its pins). */
+    fun goToSiteStart() = viewModelScope.launch { fitCameraToSite(currentSiteId.value) }
+
     fun renameSite(site: Site, name: String, notes: String) = viewModelScope.launch {
         repo.updateSite(site.copy(name = name.trim().ifEmpty { site.name }, notes = notes.trim()))
     }
@@ -333,7 +347,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Centres / zooms the remembered camera on a site's pins and paths. */
+    /** Opens the site's start view if it has one, otherwise fits the map to its pins and routes. */
     private suspend fun fitCameraToSite(id: Long) {
+        val site = repo.getSite(id)
+        val home = site?.home
+        if (home != null) {
+            cameraZoom = site.homeZoom ?: 18.0
+            cameraCenter = home
+            cameraInitialized = true
+            focusRequest.value = home
+            return
+        }
         val pts = repo.getAssetsForSite(id).map { GeoPt(it.latitude, it.longitude) } +
             repo.getPathsForSite(id).flatMap { it.points }
         if (pts.isEmpty()) return

@@ -86,7 +86,13 @@ data class Site(
     val uid: String = newUid(),
     /** True when changed on this phone and not yet pushed to the sync server. */
     val dirty: Boolean = true,
-)
+    /** Start view: where the map goes when this site is opened (null = fit to the site's pins). */
+    val homeLat: Double? = null,
+    val homeLon: Double? = null,
+    val homeZoom: Double? = null,
+) {
+    val home: GeoPt? get() = if (homeLat != null && homeLon != null) GeoPt(homeLat, homeLon) else null
+}
 
 data class SiteWithCounts(
     @Embedded val site: Site,

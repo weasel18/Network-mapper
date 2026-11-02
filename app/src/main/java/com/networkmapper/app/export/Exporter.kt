@@ -149,6 +149,9 @@ object Exporter {
                     .put("id", site.id)
                     .put("name", site.name)
                     .put("notes", site.notes)
+                    .put("homeLat", site.homeLat ?: JSONObject.NULL)
+                    .put("homeLon", site.homeLon ?: JSONObject.NULL)
+                    .put("homeZoom", site.homeZoom ?: JSONObject.NULL)
                     .put("created", Fmt.iso(site.createdAt)),
             )
         }

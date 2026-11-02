@@ -191,7 +191,16 @@ object Importer {
                 is ImportTarget.Existing -> target.siteId
                 is ImportTarget.New -> {
                     sitesCreated++
-                    repo.insertSite(Site(name = target.name.trim().ifEmpty { "Imported site" }, notes = manifestSites[key]?.optString("notes") ?: ""))
+                    val m = manifestSites[key]
+                    repo.insertSite(
+                        Site(
+                            name = target.name.trim().ifEmpty { "Imported site" },
+                            notes = m?.optString("notes") ?: "",
+                            homeLat = m?.optNullableDouble("homeLat"),
+                            homeLon = m?.optNullableDouble("homeLon"),
+                            homeZoom = m?.optNullableDouble("homeZoom"),
+                        ),
+                    )
                 }
             }
         }

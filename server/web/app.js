@@ -854,6 +854,12 @@ function renderSiteSelect() {
   const html = sites.map((s) => `<option value="${esc(s.id)}"${s.id === S.site ? " selected" : ""}>${esc(s.data.name)}</option>`).join("") || "<option>No sites yet</option>";
   if (sel.innerHTML !== html) sel.innerHTML = html;
 }
+/** Opens the site's start view if it has one, otherwise fits the map to its pins and routes. */
+function openSiteView() {
+  const h = S.sites.get(S.site)?.data.home;
+  if (h && Number.isFinite(h.lat) && Number.isFinite(h.lon)) map.setView([h.lat, h.lon], Number.isFinite(h.zoom) ? h.zoom : 18);
+  else fitSite();
+}
 function fitSite() {
   const pts = [...siteAssets().map((a) => [a.data.lat, a.data.lon]), ...sitePaths().flatMap((p) => decodePoints(p.data.points))];
   if (pts.length) map.fitBounds(pts, { padding: [40, 40], maxZoom: 19 });
@@ -870,6 +876,15 @@ async function siteAction(action) {
     const notes = prompt("Notes (address, customer, job #)", s.data.notes || ""); if (notes === null) return;
     await push([change("sites", s.id, s.id, "", { ...s.data, name: name.trim() || s.data.name, notes })]);
   } else if (action === "site-fit") fitSite();
+  else if (action === "site-home-set" && s) {
+    const c = map.getCenter();
+    await push([change("sites", s.id, s.id, "", { ...s.data, home: { lat: c.lat, lon: c.lng, zoom: map.getZoom() } })]);
+    $("#status").textContent = "Start view saved – opening this site now goes here";
+  } else if (action === "site-home-go") openSiteView();
+  else if (action === "site-home-clear" && s) {
+    await push([change("sites", s.id, s.id, "", { ...s.data, home: null })]);
+    $("#status").textContent = "Start view cleared";
+  }
   else if (action === "site-delete" && s) {
     if (prompt(`Type the site name to delete “${s.data.name}” and everything in it on all phones:`) !== s.data.name) return;
     const children = [...siteAssets().map((a) => tomb("assets", a.id, s.id)), ...sitePaths().map((p) => tomb("paths", p.id, s.id)),
@@ -915,7 +930,7 @@ async function start() {
   $("#status").textContent = "Loading…";
   await pullAll();
   render();
-  fitSite();
+  openSiteView();
   setInterval(async () => {
     try { if (await pullAll()) { render(); if (S.selected && !S.mode && !panel().contains(document.activeElement)) openDetails(); } }
     catch (e) { $("#status").textContent = e.message; }
@@ -952,10 +967,15 @@ window.addEventListener("DOMContentLoaded", () => {
   };
   ["#chk-pins", "#chk-paths", "#chk-patterns"].forEach((s) => ($(s).onchange = render));
   $("#heat-select").onchange = refreshHeat;
-  $("#site-select").onchange = () => { S.site = $("#site-select").value; localStorage.setItem("nm.site", S.site); S.selected = null; closePanel(); render(); fitSite(); refreshHeat(); };
+  $("#site-select").onchange = () => { S.site = $("#site-select").value; localStorage.setItem("nm.site", S.site); S.selected = null; closePanel(); render(); openSiteView(); refreshHeat(); };
   const toggle = (id) => $(id).classList.toggle("hidden");
   $("#btn-more").onclick = () => { $("#site-menu").classList.add("hidden"); toggle("#menu"); };
-  $("#btn-site-menu").onclick = () => { $("#menu").classList.add("hidden"); toggle("#site-menu"); };
+  $("#btn-site-menu").onclick = () => {
+    $("#menu").classList.add("hidden");
+    const hasHome = !!S.sites.get(S.site)?.data.home;
+    document.querySelectorAll('[data-action="site-home-go"], [data-action="site-home-clear"]').forEach((el) => el.classList.toggle("hidden", !hasHome));
+    toggle("#site-menu");
+  };
   document.querySelectorAll(".menu button").forEach((b) => (b.onclick = async () => {
     b.parentElement.classList.add("hidden");
     const a = b.dataset.action;

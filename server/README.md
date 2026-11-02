@@ -101,6 +101,8 @@ the same access key (`SYNC_KEY`). Give the browser a name, such as "Office PC", 
   points to move them, and right-click (or Alt-click) a point to remove it. Then click **Finish**. **Edit / extend
   route** changes an existing route the same way.
 - **Sites:** use the **⋯** button next to the site list to add, rename, zoom to or delete a site.
+  **Save this view as start view** remembers where the map is (position and zoom): opening that site, on the web or
+  on a phone, goes straight there. Without a start view, the map zooms to fit the site's pins.
 - **☰ menu:** pins & routes list with search, AP names, Wi-Fi filter, phones & browsers that have synced,
   GeoJSON export of the site, and CSV export of the Wi-Fi survey.
 - The browser checks for changes from the phones every 15 seconds. Phones pick up the browser's edits on their

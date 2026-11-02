@@ -388,6 +388,24 @@ fun MapScreen(
                                 showMenu = false
                                 showCombine = true
                             })
+                            HorizontalDivider()
+                            DropdownMenuItem(text = { Text("Save this view as the site's start view") }, onClick = {
+                                showMenu = false
+                                val c = mapView.mapCenter
+                                vm.setSiteStartView(GeoPt(c.latitude, c.longitude), mapView.zoomLevelDouble)
+                                Toast.makeText(context, "Start view saved – opening this site now goes here", Toast.LENGTH_LONG).show()
+                            })
+                            if (currentSite?.home != null) {
+                                DropdownMenuItem(text = { Text("Go to the site's start view") }, onClick = {
+                                    showMenu = false
+                                    vm.goToSiteStart()
+                                })
+                                DropdownMenuItem(text = { Text("Clear the site's start view") }, onClick = {
+                                    showMenu = false
+                                    vm.clearSiteStartView()
+                                    Toast.makeText(context, "Start view cleared – the site opens zoomed to its pins", Toast.LENGTH_SHORT).show()
+                                })
+                            }
                         }
                     }
                 },
