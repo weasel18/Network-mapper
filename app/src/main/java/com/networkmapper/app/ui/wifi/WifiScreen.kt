@@ -226,13 +226,14 @@ fun WifiScreen(vm: MainViewModel, onBack: () -> Unit, onShowMap: () -> Unit, onO
                     if (running && refused > 0) {
                         Text(
                             "⚠ Android is limiting Wi-Fi scans ($refused refused), so APs other than the one you're " +
-                                "connected to are only sampled about every 30 s. To fix: Settings → About phone → tap " +
+                                "connected to are only sampled about every 30 s. To fix, use Faster scans below, or: Settings → About phone → tap " +
                                 "Build number 7 times, then Settings → System → Developer options → turn OFF " +
                                 "“Wi-Fi scan throttling”.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.error,
                         )
                     }
+                    FasterScansSection()
                     Text(
                         "Every scan records all networks in range – every SSID and BSSID on 2.4, 5 and 6 GHz, not just " +
                             "the one you're connected to (except networks hidden by this site's Wi-Fi filter). Android " +
@@ -334,7 +335,8 @@ fun WifiScreen(vm: MainViewModel, onBack: () -> Unit, onShowMap: () -> Unit, onO
                         val entry = ScanEntry(n.ssid, n.bssid, n.bestRssi, n.frequency, "")
                         NetworkRow(
                             entry,
-                            "best ${n.bestRssi} dBm • ${n.samples} samples",
+                            "best ${n.bestRssi} dBm • ${n.samples} samples" +
+                                (Wifi.radioDetails(n.standard, n.widthMhz, n.stations, n.utilPct, n.frequency, peak = true)?.let { "\n$it" } ?: ""),
                             apNames[n.bssid],
                             onName = { nameAp = entry },
                             onHide = { hide(entry, it) },
@@ -456,7 +458,14 @@ private fun NetworkRow(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            if (extra != null) Text(extra, style = MaterialTheme.typography.bodySmall)
+            if (extra != null) {
+                Text(extra, style = MaterialTheme.typography.bodySmall)
+            } else {
+                // Live scan: Wi-Fi generation, channel width and the AP's advertised load, when known.
+                Wifi.radioDetails(e.standard, e.widthMhz, e.stations, e.utilPct, e.frequency)?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
         }
         Column(horizontalAlignment = Alignment.End) {
             Text("${e.rssi} dBm", fontWeight = FontWeight.Bold, color = Color(Wifi.rssiColor(e.rssi)))

@@ -236,6 +236,8 @@ class SyncEngine(
         .put("acc", r.accuracy ?: JSONObject.NULL)
         .put("ssid", r.ssid).put("bssid", r.bssid).put("rssi", r.rssi).put("freq", r.frequency)
         .put("sec", r.security).put("conn", r.connected)
+        .put("std", r.standard).put("width", r.widthMhz)
+        .put("sta", r.stations ?: JSONObject.NULL).put("util", r.utilPct ?: JSONObject.NULL)
 
     // =================================================================== pull
 
@@ -505,6 +507,10 @@ class SyncEngine(
                 connected = d.optBoolean("conn"),
                 uid = uid,
                 dirty = false,
+                standard = d.optInt("std"),
+                widthMhz = d.optInt("width"),
+                stations = d.optNullable("sta")?.toInt(),
+                utilPct = d.optNullable("util")?.toInt(),
             )
         }
         rows.chunked(500).forEach { sync.insertReadings(it) }

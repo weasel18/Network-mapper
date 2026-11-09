@@ -54,6 +54,12 @@ function distanceM(a, b) {
 }
 const pathLength = (pts) => pts.slice(1).reduce((s, p, i) => s + distanceM(pts[i], p), 0);
 const fmtDist = (m) => (m < 1000 ? `${Math.round(m)} m (${Math.round(m * 3.28084)} ft)` : `${(m / 1000).toFixed(2)} km (${(m / 1609.344).toFixed(2)} mi)`);
+/** "Wi-Fi 6 · 80 MHz · 12 clients · 35% busy" from a reading's extra fields (newer app versions record them), or "". */
+function radioDetails(r) {
+  const gen = { 1: "802.11a/b/g", 4: "Wi-Fi 4", 5: "Wi-Fi 5", 6: r.freq >= 5925 ? "Wi-Fi 6E" : "Wi-Fi 6", 7: "WiGig", 8: "Wi-Fi 7" }[r.std];
+  return [gen, r.width > 0 ? `${r.width} MHz` : "", r.sta != null ? `${r.sta} client${r.sta === 1 ? "" : "s"}` : "", r.util != null ? `${r.util}% busy` : ""]
+    .filter(Boolean).join(" · ");
+}
 /** "2.4", "5" or "6" (GHz) for a Wi-Fi frequency in MHz. */
 const bandOf = (mhz) => (mhz < 3000 ? "2.4" : mhz < 5925 ? "5" : mhz < 7200 ? "6" : "60");
 function rssiColor(r) {
@@ -1068,7 +1074,7 @@ async function refreshHeat() {
   for (const r of $("#chk-dots").checked ? spots.values() : []) {
     const name = S.apNames.get(String(r.bssid).toLowerCase())?.data.name;
     layers.heat.addLayer(L.circleMarker([r.lat, r.lon], { radius: 6, stroke: false, fillColor: rssiColor(r.rssi), fillOpacity: 0.75 })
-      .bindTooltip(`${esc(name || r.ssid || "(hidden)")} ${r.rssi} dBm<br><span class="small">${esc(r.bssid)}</span>`));
+      .bindTooltip(`${esc(name || r.ssid || "(hidden)")} ${r.rssi} dBm<br><span class="small">${esc(r.bssid)}${radioDetails(r) ? "<br>" + esc(radioDetails(r)) : ""}</span>`));
   }
   layers.legend.addTo(map);
   // Offer per-AP heatmaps for networks seen in this site.

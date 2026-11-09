@@ -72,6 +72,8 @@ class SurveyService : Service() {
         val name = requestedName?.takeIf { it.isNotBlank() } ?: "Survey ${Fmt.dateTime(System.currentTimeMillis())}"
         val filters = app.wifiFilter
 
+        // With the one-time permission, lift Android's scan limit for the length of the survey.
+        com.networkmapper.app.wifi.ScanThrottle.onSurveyStart(this)
         job = scope.launch {
             val sessionId = repo.startSession(name, siteId)
             // Only this site's Wi-Fi filter applies to its survey.
@@ -93,6 +95,10 @@ class SurveyService : Service() {
                 frequency = e.frequency,
                 security = e.security,
                 connected = connected,
+                standard = e.standard,
+                widthMhz = e.widthMhz,
+                stations = e.stations,
+                utilPct = e.utilPct,
             )
 
             // Location stream + connected-AP sampling every ~2 m of movement.
@@ -138,6 +144,7 @@ class SurveyService : Service() {
     }
 
     private fun stopSurvey() {
+        com.networkmapper.app.wifi.ScanThrottle.onSurveyStop(this)
         job?.cancel()
         job = null
         val sessionId = SurveyState.sessionId.value

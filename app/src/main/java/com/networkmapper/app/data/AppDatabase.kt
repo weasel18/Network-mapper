@@ -13,7 +13,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         Site::class, Asset::class, NetPath::class, Photo::class, SurveySession::class, WifiReading::class,
         ApName::class, SyncTombstone::class,
     ],
-    version = 6,
+    version = 7,
     exportSchema = false,
 )
 @TypeConverters(Converters::class)
@@ -114,6 +114,16 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** v6 -> v7: per-reading Wi-Fi generation, channel width and the AP's advertised load. */
+        val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `wifi_readings` ADD COLUMN `standard` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `wifi_readings` ADD COLUMN `widthMhz` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `wifi_readings` ADD COLUMN `stations` INTEGER")
+                db.execSQL("ALTER TABLE `wifi_readings` ADD COLUMN `utilPct` INTEGER")
+            }
+        }
+
         private val createCallback = object : RoomDatabase.Callback() {
             override fun onCreate(db: SupportSQLiteDatabase) {
                 insertDefaultSite(db)
@@ -122,7 +132,7 @@ abstract class AppDatabase : RoomDatabase() {
 
         /** Shared configuration, also used by tests with an in-memory builder. */
         fun configure(builder: RoomDatabase.Builder<AppDatabase>): RoomDatabase.Builder<AppDatabase> =
-            builder.addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6).addCallback(createCallback)
+            builder.addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7).addCallback(createCallback)
 
         fun build(context: Context): AppDatabase =
             configure(Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, "network_mapper.db"))

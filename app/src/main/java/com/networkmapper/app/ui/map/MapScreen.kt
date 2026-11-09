@@ -952,6 +952,7 @@ private fun SpotCard(
                                     if (named != null) n.ssid.ifEmpty { "(hidden)" } else null,
                                     n.bssid,
                                     "${Wifi.band(n.frequency)} ch ${Wifi.channel(n.frequency)}",
+                                    Wifi.radioDetails(n.standard, n.widthMhz, n.stations, n.utilPct, n.frequency, peak = true),
                                 ).joinToString(" • "),
                                 style = MaterialTheme.typography.labelSmall,
                                 maxLines = 1,

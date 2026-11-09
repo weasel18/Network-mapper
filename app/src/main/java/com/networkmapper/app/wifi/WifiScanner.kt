@@ -23,7 +23,32 @@ data class ScanEntry(
     val connected: Boolean = false,
     /** Age of the measurement in ms at the time it was read. */
     val ageMs: Long = 0,
+    /** ScanResult.WIFI_STANDARD_* (0 = unknown, before Android 11). */
+    val standard: Int = 0,
+    /** Channel width in MHz (0 = unknown). */
+    val widthMhz: Int = 0,
+    /** From the AP's BSS Load element, when it sends one. */
+    val stations: Int? = null,
+    val utilPct: Int? = null,
 )
+
+/** Reads the BSS Load element (id 11): station count (2 bytes, little-endian) and channel utilisation (0–255). */
+internal fun parseBssLoad(bytes: ByteArray): Pair<Int, Int>? {
+    if (bytes.size < 3) return null
+    val stations = (bytes[0].toInt() and 0xFF) or ((bytes[1].toInt() and 0xFF) shl 8)
+    val util = ((bytes[2].toInt() and 0xFF) * 100 + 127) / 255
+    return stations to util
+}
+
+/** ScanResult.CHANNEL_WIDTH_* to MHz. */
+internal fun widthMhz(channelWidth: Int): Int = when (channelWidth) {
+    0 -> 20
+    1 -> 40
+    2 -> 80
+    3, 4 -> 160 // 160 MHz and 80+80 MHz
+    5 -> 320
+    else -> 0
+}
 
 class WifiScanner(context: Context) {
     private val appContext = context.applicationContext
@@ -83,16 +108,37 @@ class WifiScanner(context: Context) {
             frequency = info.frequency,
             security = "",
             connected = true,
+            standard = if (android.os.Build.VERSION.SDK_INT >= 30) info.wifiStandard else 0,
         )
     }
 
     @Suppress("DEPRECATION")
-    private fun ScanResult.toEntry(nowUs: Long) = ScanEntry(
-        ssid = SSID ?: "",
-        bssid = (BSSID ?: "").lowercase(),
-        rssi = level,
-        frequency = frequency,
-        security = capabilities ?: "",
-        ageMs = ((nowUs - timestamp) / 1000L).coerceAtLeast(0L),
-    )
+    private fun ScanResult.toEntry(nowUs: Long): ScanEntry {
+        var load: Pair<Int, Int>? = null
+        var standard = 0
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            standard = wifiStandard
+            load = try {
+                informationElements.firstOrNull { it.id == 11 }?.bytes?.let { buf ->
+                    val b = ByteArray(buf.remaining())
+                    buf.duplicate().get(b)
+                    parseBssLoad(b)
+                }
+            } catch (e: Exception) {
+                null
+            }
+        }
+        return ScanEntry(
+            ssid = SSID ?: "",
+            bssid = (BSSID ?: "").lowercase(),
+            rssi = level,
+            frequency = frequency,
+            security = capabilities ?: "",
+            ageMs = ((nowUs - timestamp) / 1000L).coerceAtLeast(0L),
+            standard = standard,
+            widthMhz = widthMhz(channelWidth),
+            stations = load?.first,
+            utilPct = load?.second,
+        )
+    }
 }

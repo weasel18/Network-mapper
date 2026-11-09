@@ -127,4 +127,10 @@ The committed key is fine for an internal, sideloaded tool. Use a private releas
 
 - Android allows apps 4 Wi-Fi scans per 2 minutes. For denser surveys, turn off *Developer options → Wi-Fi scan throttling*.
   While surveying, the map and Wi-Fi screen show how often scans actually arrive and warn when Android is refusing them.
+  **Faster scans** (Wi-Fi screen): give the app a one-time permission with **Grant with Shizuku**, or from a computer
+  with `adb shell pm grant com.networkmapper.field android.permission.WRITE_SECURE_SETTINGS`, and surveys switch the
+  scan limit off while they run and back on afterwards.
+- Each reading also records the AP's Wi-Fi generation (Android 11+), channel width and, if the AP broadcasts it,
+  its client count and how busy the channel is. These show in the network lists, when you tap a heatmap dot,
+  and in the web heatmap's tooltips.
 - All data stays on the device (Room database + app-private photo folder) until you export it.

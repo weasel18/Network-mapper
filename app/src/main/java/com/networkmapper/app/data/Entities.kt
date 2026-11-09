@@ -262,6 +262,14 @@ data class WifiReading(
     val uid: String = newUid(),
     /** True when changed on this phone and not yet pushed to the sync server. */
     val dirty: Boolean = true,
+    /** Wi-Fi generation as Android reports it (ScanResult.WIFI_STANDARD_*; 0 = unknown). See [Wifi.generation]. */
+    @ColumnInfo(defaultValue = "0") val standard: Int = 0,
+    /** Channel width in MHz (20/40/80/160/320; 0 = unknown). */
+    @ColumnInfo(defaultValue = "0") val widthMhz: Int = 0,
+    /** Clients connected to the AP, from its BSS Load broadcast (null if it doesn't send one). */
+    val stations: Int? = null,
+    /** How busy the channel is, 0–100 %, from the AP's BSS Load broadcast. */
+    val utilPct: Int? = null,
 )
 
 /** Your own name for a Wi-Fi radio, keyed by BSSID (lower-case aa:bb:cc:dd:ee:ff). Shared by all sites. */
@@ -288,4 +296,9 @@ data class NetworkSummary(
     val bestRssi: Int,
     val samples: Int,
     val frequency: Int,
+    /** Highest Wi-Fi generation / channel width seen, and the AP's peak client count and channel load (if it reports them). */
+    val standard: Int = 0,
+    val widthMhz: Int = 0,
+    val stations: Int? = null,
+    val utilPct: Int? = null,
 )

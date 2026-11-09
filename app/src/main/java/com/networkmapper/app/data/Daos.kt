@@ -214,21 +214,24 @@ interface WifiDao {
     fun observeReadingCountForSite(siteId: Long): Flow<Int>
 
     @Query(
-        "SELECT r.bssid AS bssid, r.ssid AS ssid, MAX(r.rssi) AS bestRssi, COUNT(*) AS samples, MAX(r.frequency) AS frequency " +
+        "SELECT r.bssid AS bssid, r.ssid AS ssid, MAX(r.rssi) AS bestRssi, COUNT(*) AS samples, MAX(r.frequency) AS frequency, " +
+            "MAX(r.standard) AS standard, MAX(r.widthMhz) AS widthMhz, MAX(r.stations) AS stations, MAX(r.utilPct) AS utilPct " +
             "FROM wifi_readings r INNER JOIN survey_sessions s ON r.sessionId = s.id WHERE s.siteId = :siteId " +
             "GROUP BY r.bssid ORDER BY bestRssi DESC",
     )
     fun observeNetworks(siteId: Long): Flow<List<NetworkSummary>>
 
     @Query(
-        "SELECT r.bssid AS bssid, r.ssid AS ssid, MAX(r.rssi) AS bestRssi, COUNT(*) AS samples, MAX(r.frequency) AS frequency " +
+        "SELECT r.bssid AS bssid, r.ssid AS ssid, MAX(r.rssi) AS bestRssi, COUNT(*) AS samples, MAX(r.frequency) AS frequency, " +
+            "MAX(r.standard) AS standard, MAX(r.widthMhz) AS widthMhz, MAX(r.stations) AS stations, MAX(r.utilPct) AS utilPct " +
             "FROM wifi_readings r INNER JOIN survey_sessions s ON r.sessionId = s.id WHERE s.siteId = :siteId " +
             "GROUP BY r.bssid ORDER BY bestRssi DESC",
     )
     suspend fun getNetworks(siteId: Long): List<NetworkSummary>
 
     @Query(
-        "SELECT r.bssid AS bssid, r.ssid AS ssid, MAX(r.rssi) AS bestRssi, COUNT(*) AS samples, MAX(r.frequency) AS frequency " +
+        "SELECT r.bssid AS bssid, r.ssid AS ssid, MAX(r.rssi) AS bestRssi, COUNT(*) AS samples, MAX(r.frequency) AS frequency, " +
+            "MAX(r.standard) AS standard, MAX(r.widthMhz) AS widthMhz, MAX(r.stations) AS stations, MAX(r.utilPct) AS utilPct " +
             "FROM wifi_readings r INNER JOIN survey_sessions s ON r.sessionId = s.id WHERE s.siteId = :siteId " +
             "AND r.latitude BETWEEN :south AND :north AND r.longitude BETWEEN :west AND :east " +
             "GROUP BY r.bssid ORDER BY bestRssi DESC",

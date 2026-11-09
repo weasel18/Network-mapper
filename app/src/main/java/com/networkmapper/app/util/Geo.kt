@@ -113,6 +113,26 @@ object Wifi {
         return rampStops.last().second
     }
 
+    /** "Wi-Fi 6" etc. from Android's ScanResult.WIFI_STANDARD_* value (null when unknown). */
+    fun generation(standard: Int, frequencyMhz: Int = 0): String? = when (standard) {
+        1 -> "802.11a/b/g"
+        4 -> "Wi-Fi 4"
+        5 -> "Wi-Fi 5"
+        6 -> if (frequencyMhz >= 5925) "Wi-Fi 6E" else "Wi-Fi 6"
+        7 -> "WiGig"
+        8 -> "Wi-Fi 7"
+        else -> null
+    }
+
+    /** "Wi-Fi 6 • 80 MHz • up to 12 clients • up to 35% busy" (only the parts that are known), or null. */
+    fun radioDetails(standard: Int, widthMhz: Int, stations: Int?, utilPct: Int?, frequencyMhz: Int = 0, peak: Boolean = false): String? =
+        listOfNotNull(
+            generation(standard, frequencyMhz),
+            widthMhz.takeIf { it > 0 }?.let { "$it MHz" },
+            stations?.let { (if (peak) "up to " else "") + "$it client${if (it == 1) "" else "s"}" },
+            utilPct?.let { (if (peak) "up to " else "") + "$it% busy" },
+        ).joinToString(" • ").ifEmpty { null }
+
     fun rssiQuality(rssi: Int): String = when {
         rssi >= -50 -> "Excellent"
         rssi >= -60 -> "Good"

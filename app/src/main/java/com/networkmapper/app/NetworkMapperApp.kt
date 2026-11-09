@@ -33,6 +33,8 @@ class NetworkMapperApp : Application() {
     override fun onCreate() {
         super.onCreate()
         com.networkmapper.app.util.CrashLog.install(this)
+        // If the app was killed mid-survey, put Android's Wi-Fi scan limit back the way it was.
+        com.networkmapper.app.wifi.ScanThrottle.onSurveyStop(this)
         val db = AppDatabase.build(this)
         repository = Repository(this, db)
         wifiFilter = WifiFilterStore(this)
