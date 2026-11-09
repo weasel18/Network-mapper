@@ -214,10 +214,30 @@ fun WifiScreen(vm: MainViewModel, onBack: () -> Unit, onShowMap: () -> Unit, onO
                             )
                         }
                     }
+                    val gap by SurveyState.actualScanGapMs.collectAsStateWithLifecycle()
+                    val refused by SurveyState.refusedScans.collectAsStateWithLifecycle()
+                    if (running && gap != null) {
+                        Text(
+                            "Actually scanning every ~${(gap!! + 500) / 1000} s",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                    if (running && refused > 0) {
+                        Text(
+                            "⚠ Android is limiting Wi-Fi scans ($refused refused), so APs other than the one you're " +
+                                "connected to are only sampled about every 30 s. To fix: Settings → About phone → tap " +
+                                "Build number 7 times, then Settings → System → Developer options → turn OFF " +
+                                "“Wi-Fi scan throttling”.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
                     Text(
-                        "Android limits apps to 4 Wi-Fi scans per 2 minutes. For faster scans, turn off " +
-                            "“Wi-Fi scan throttling” in Developer options. The connected network's signal is " +
-                            "logged every 2 m regardless.",
+                        "Every scan records all networks in range – every SSID and BSSID on 2.4, 5 and 6 GHz, not just " +
+                            "the one you're connected to (except networks hidden by this site's Wi-Fi filter). Android " +
+                            "allows apps only 4 scans per 2 minutes unless “Wi-Fi scan throttling” is turned off in " +
+                            "Developer options. The connected network's signal is logged every 2 m regardless.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

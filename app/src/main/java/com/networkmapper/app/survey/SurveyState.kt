@@ -21,13 +21,35 @@ object SurveyState {
     val lastScanAt = MutableStateFlow(0L)
     val lastLocation = MutableStateFlow<Location?>(null)
 
-    /** How often to request a Wi-Fi scan while surveying. */
-    val scanIntervalMs = MutableStateFlow(30_000L)
+    /** How often to ask for a Wi-Fi scan while surveying (Android may refuse some; see [refusedScans]). */
+    val scanIntervalMs = MutableStateFlow(5_000L)
+
+    /** Average time between scan results actually received, over the last few scans (null until known). */
+    val actualScanGapMs = MutableStateFlow<Long?>(null)
+
+    /** Scan requests Android turned down this survey (Wi-Fi scan throttling is on). */
+    val refusedScans = MutableStateFlow(0)
+    private val scanTimes = ArrayDeque<Long>()
+
+    internal fun scanArrived(at: Long) {
+        scanTimes.addLast(at)
+        while (scanTimes.size > 6) scanTimes.removeFirst()
+        if (scanTimes.size >= 2) actualScanGapMs.value = (scanTimes.last() - scanTimes.first()) / (scanTimes.size - 1)
+    }
+
+    /** Short status for the map chip / notification, e.g. "scan every ~31 s (throttled)". */
+    fun scanSummary(): String? {
+        val gap = actualScanGapMs.value ?: return null
+        return "scan every ~${(gap + 500) / 1000} s" + if (refusedScans.value > 0) " (Android is limiting scans)" else ""
+    }
 
     internal fun started(sessionId: Long) {
         _sessionId.value = sessionId
         _readings.value = 0
         _running.value = true
+        scanTimes.clear()
+        actualScanGapMs.value = null
+        refusedScans.value = 0
     }
 
     internal fun added(count: Int) {

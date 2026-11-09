@@ -436,8 +436,11 @@ fun MapScreen(
             ) {
                 GpsChip(location, hasLocationPermission, onRequestPermission)
                 if (surveyRunning) {
+                    val gap by SurveyState.actualScanGapMs.collectAsStateWithLifecycle()
+                    val refused by SurveyState.refusedScans.collectAsStateWithLifecycle()
                     StatusChip(
-                        text = "● Surveying – $surveyReadings readings",
+                        text = "● Surveying – $surveyReadings readings" +
+                            (gap?.let { " • scan ~${(it + 500) / 1000} s" } ?: "") + if (refused > 0) " ⚠" else "",
                         color = Color(0xFFC62828),
                         onClick = onOpenWifi,
                     )
@@ -446,7 +449,13 @@ fun MapScreen(
                     val legendLabel = (heatFilter as? HeatFilter.Bssid)?.let { f ->
                         "AP: ${apNames[f.bssid] ?: f.ssid.ifEmpty { "(hidden)" }}"
                     } ?: heatFilter.label
-                    HeatLegend(legendLabel, heat.size, coverage, onClear = vm::clearHeatmap, band = heatBand, onBand = { vm.heatBand.value = it })
+                    HeatLegend(
+                        legendLabel, heat.size, coverage, onClear = vm::clearHeatmap, band = heatBand, onBand = { vm.heatBand.value = it },
+                        showDots = settings.showHeatDots,
+                        showSurface = settings.showHeatSurface,
+                        onDots = { on -> vm.updateSettings { it.copy(showHeatDots = on) } },
+                        onSurface = { on -> vm.updateSettings { it.copy(showHeatSurface = on) } },
+                    )
                 }
             }
 
@@ -815,6 +824,10 @@ private fun HeatLegend(
     onClear: () -> Unit,
     band: com.networkmapper.app.ui.HeatBand,
     onBand: (com.networkmapper.app.ui.HeatBand) -> Unit,
+    showDots: Boolean = true,
+    showSurface: Boolean = true,
+    onDots: (Boolean) -> Unit = {},
+    onSurface: (Boolean) -> Unit = {},
 ) {
     Surface(shape = RoundedCornerShape(8.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f), shadowElevation = 3.dp) {
         Column(Modifier.padding(start = 8.dp, top = 2.dp, bottom = 8.dp)) {
@@ -842,6 +855,21 @@ private fun HeatLegend(
                     )
                 }
                 Text("GHz", style = MaterialTheme.typography.labelSmall, modifier = Modifier.align(Alignment.CenterVertically))
+            }
+            // What to draw: the dots, the smooth average colour, or both.
+            Row(Modifier.padding(end = 8.dp, bottom = 2.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                FilterChip(
+                    selected = showDots,
+                    onClick = { onDots(!showDots) },
+                    label = { Text("Dots", style = MaterialTheme.typography.labelSmall) },
+                    modifier = Modifier.height(28.dp),
+                )
+                FilterChip(
+                    selected = showSurface,
+                    onClick = { onSurface(!showSurface) },
+                    label = { Text("Average colour", style = MaterialTheme.typography.labelSmall) },
+                    modifier = Modifier.height(28.dp),
+                )
             }
             if (coverage != null) {
                 Text(
@@ -1492,7 +1520,8 @@ private fun LayersDialog(
                 CheckRow("Pins", settings.showAssets) { onChange(settings.copy(showAssets = it)) }
                 CheckRow("Fiber / link paths", settings.showPaths) { onChange(settings.copy(showPaths = it)) }
                 CheckRow("Wi-Fi signal heatmap", settings.showHeatmap) { onChange(settings.copy(showHeatmap = it)) }
-                CheckRow("   Smooth average colour under the dots", settings.showHeatSurface) { onChange(settings.copy(showHeatSurface = it)) }
+                CheckRow("   Signal dots", settings.showHeatDots) { onChange(settings.copy(showHeatDots = it)) }
+                CheckRow("   Smooth average colour", settings.showHeatSurface) { onChange(settings.copy(showHeatSurface = it)) }
                 CheckRow("AP coverage patterns", settings.showPatterns) { onChange(settings.copy(showPatterns = it)) }
                 HorizontalDivider(Modifier.padding(vertical = 6.dp))
                 Text("Pin types", style = MaterialTheme.typography.titleSmall)

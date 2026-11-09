@@ -10,6 +10,7 @@ import com.networkmapper.app.wifi.WifiFilterStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import org.osmdroid.config.Configuration
 import java.io.File
 
@@ -42,7 +43,12 @@ class NetworkMapperApp : Application() {
         osm.load(this, getSharedPreferences("osmdroid", MODE_PRIVATE))
         osm.userAgentValue = "$packageName/${BuildConfig.VERSION_NAME}"
         osm.osmdroidBasePath = File(filesDir, "osmdroid")
-        osm.osmdroidTileCache = File(cacheDir, "osmdroid/tiles")
+        // Map tiles you've viewed are kept (in app storage, which Android doesn't clear on its own) so the
+        // map still shows them with no signal. Expired tiles are refreshed when online and still shown offline.
+        osm.osmdroidTileCache = File(filesDir, "osmdroid/tiles")
+        osm.tileFileSystemCacheMaxBytes = 1024L * 1024 * 1024
+        osm.tileFileSystemCacheTrimBytes = 900L * 1024 * 1024
+        appScope.launch(Dispatchers.IO) { File(cacheDir, "osmdroid").deleteRecursively() } // old, evictable location
 
         val channel = NotificationChannel(
             SURVEY_CHANNEL_ID,

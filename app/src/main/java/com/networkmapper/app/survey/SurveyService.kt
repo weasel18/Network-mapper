@@ -115,6 +115,7 @@ class SurveyService : Service() {
                 scanner.results().collect { results ->
                     SurveyState.lastScan.value = results
                     SurveyState.lastScanAt.value = System.currentTimeMillis()
+                    SurveyState.scanArrived(System.currentTimeMillis())
                     val loc = lastLoc ?: return@collect
                     if (System.currentTimeMillis() - loc.time > 15_000L) return@collect
                     val fresh = results.filter { it.ageMs < 15_000L && it.bssid.isNotEmpty() && allows(it.ssid, it.bssid) }
@@ -128,7 +129,8 @@ class SurveyService : Service() {
             // Periodic scan requests.
             launch {
                 while (isActive) {
-                    scanner.requestScan()
+                    // false = Android refused it (Wi-Fi scan throttling: 4 scans per 2 minutes).
+                    if (!scanner.requestScan()) SurveyState.refusedScans.value += 1
                     delay(SurveyState.scanIntervalMs.value.coerceAtLeast(2_000L))
                 }
             }
@@ -155,7 +157,8 @@ class SurveyService : Service() {
     }
 
     private fun updateNotification() {
-        val text = "${SurveyState.readings.value} readings • ${SurveyState.lastScan.value.size} networks in last scan"
+        val text = "${SurveyState.readings.value} readings • ${SurveyState.lastScan.value.size} networks in last scan" +
+            (SurveyState.scanSummary()?.let { " • $it" } ?: "")
         try {
             NotificationManagerCompat.from(this).notify(NOTIFICATION_ID, buildNotification(text))
         } catch (e: SecurityException) {

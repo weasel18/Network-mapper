@@ -221,6 +221,11 @@ function initMap() {
   baseLayers = {
     "Street": L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 22, maxNativeZoom: 19, attribution: "© OpenStreetMap contributors" }),
     "Satellite": L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", { maxZoom: 22, maxNativeZoom: 19, attribution: "Imagery © Esri, Maxar, Earthstar Geographics" }),
+    "Satellite + labels": L.layerGroup([
+      L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", { maxZoom: 22, maxNativeZoom: 19, attribution: "Imagery © Esri, Maxar, Earthstar Geographics" }),
+      L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}", { maxZoom: 22, maxNativeZoom: 19, attribution: "Labels © Esri" }),
+      L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}", { maxZoom: 22, maxNativeZoom: 19 }),
+    ]),
     "Topographic": L.tileLayer("https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png", { maxZoom: 22, maxNativeZoom: 17, attribution: "© OpenTopoMap (CC-BY-SA)" }),
   };
   let base = "Street";
@@ -1060,7 +1065,7 @@ async function refreshHeat() {
     if (!old || r.rssi > old.rssi) spots.set(k, r);
   }
   layers.surface.setPoints($("#chk-surface").checked ? [...spots.values()].map((r) => [r.lat, r.lon, r.rssi]) : []);
-  for (const r of spots.values()) {
+  for (const r of $("#chk-dots").checked ? spots.values() : []) {
     const name = S.apNames.get(String(r.bssid).toLowerCase())?.data.name;
     layers.heat.addLayer(L.circleMarker([r.lat, r.lon], { radius: 6, stroke: false, fillColor: rssiColor(r.rssi), fillOpacity: 0.75 })
       .bindTooltip(`${esc(name || r.ssid || "(hidden)")} ${r.rssi} dBm<br><span class="small">${esc(r.bssid)}</span>`));
@@ -1212,6 +1217,7 @@ window.addEventListener("DOMContentLoaded", () => {
   };
   ["#chk-pins", "#chk-paths", "#chk-patterns"].forEach((s) => ($(s).onchange = render));
   $("#chk-surface").onchange = refreshHeat;
+  $("#chk-dots").onchange = refreshHeat;
   $("#band-select").onchange = refreshHeat;
   $("#heat-select").onchange = refreshHeat;
   $("#site-select").onchange = () => { S.site = $("#site-select").value; localStorage.setItem("nm.site", S.site); S.selected = null; closePanel(); render(); openSiteView(); refreshHeat(); };

@@ -65,7 +65,9 @@ import java.io.File
 import kotlin.math.cos
 import kotlin.math.log2
 
-enum class TileStyle(val label: String) { STREET("Street map"), TOPO("Topographic"), SATELLITE("Satellite imagery") }
+enum class TileStyle(val label: String) {
+    STREET("Street map"), TOPO("Topographic"), SATELLITE("Satellite imagery"), HYBRID("Satellite + labels (roads, places)")
+}
 
 data class MapSettings(
     val showAssets: Boolean = true,
@@ -75,6 +77,8 @@ data class MapSettings(
     val showPatterns: Boolean = true,
     /** Smooth average-signal colour surface under the heatmap dots. */
     val showHeatSurface: Boolean = true,
+    /** The heatmap's signal dots (one per surveyed spot). */
+    val showHeatDots: Boolean = true,
     val tileStyle: TileStyle = TileStyle.STREET,
     val hiddenTypes: Set<AssetType> = emptySet(),
 )

@@ -8,7 +8,9 @@ poles and demarcs. It also maps Wi-Fi signal strength by GPS and attaches GPS-ta
 
 - **Sites**: keep each job or location separate. Every site has its own pins, paths, photos and Wi-Fi surveys. Tap the
   site name at the top of the map to switch sites, or to create, rename or delete them. Data saves automatically.
-- **Map** (OpenStreetMap, topo, or Esri satellite imagery; no API key needed). Tiles you've viewed are cached for offline use.
+- **Map** (OpenStreetMap, topo, Esri satellite imagery, or satellite with road and place labels; no API key needed).
+  Map tiles you've viewed are kept on the phone (up to 1 GB) so they still show with no signal; browse your sites'
+  areas while online before heading somewhere without coverage.
 - **Pins**: drop one at your GPS position (+ button) or long-press anywhere. There are 11 asset types, each with
   suggested detail fields (e.g. splice count, tray count, SSID/MAC/IP, azimuth/tilt, port count), plus custom fields,
   status and notes. Pins can't be moved by accident: tap a pin, then **Move**, then tap the new spot, drag it, or use GPS,
@@ -124,4 +126,5 @@ The committed key is fine for an internal, sideloaded tool. Use a private releas
 ## Notes
 
 - Android allows apps 4 Wi-Fi scans per 2 minutes. For denser surveys, turn off *Developer options → Wi-Fi scan throttling*.
+  While surveying, the map and Wi-Fi screen show how often scans actually arrive and warn when Android is refusing them.
 - All data stays on the device (Room database + app-private photo folder) until you export it.

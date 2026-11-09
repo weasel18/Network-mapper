@@ -54,10 +54,22 @@ object TileSources {
             baseUrl + MapTileIndex.getZoom(pMapTileIndex) + "/" + MapTileIndex.getY(pMapTileIndex) + "/" + MapTileIndex.getX(pMapTileIndex)
     }
 
+    /** Esri reference layers drawn over the imagery for "Satellite + labels". */
+    private fun esriReference(name: String): ITileSource = object : OnlineTileSourceBase(
+        "EsriRef$name", 0, 19, 256, ".png",
+        arrayOf("https://server.arcgisonline.com/ArcGIS/rest/services/Reference/$name/MapServer/tile/"),
+        "Labels © Esri",
+    ) {
+        override fun getTileURLString(pMapTileIndex: Long): String =
+            baseUrl + MapTileIndex.getZoom(pMapTileIndex) + "/" + MapTileIndex.getY(pMapTileIndex) + "/" + MapTileIndex.getX(pMapTileIndex)
+    }
+
+    val esriLabels: List<ITileSource> by lazy { listOf(esriReference("World_Transportation"), esriReference("World_Boundaries_and_Places")) }
+
     fun forStyle(style: TileStyle): ITileSource = when (style) {
         TileStyle.STREET -> TileSourceFactory.MAPNIK
         TileStyle.TOPO -> TileSourceFactory.OpenTopo
-        TileStyle.SATELLITE -> esriImagery
+        TileStyle.SATELLITE, TileStyle.HYBRID -> esriImagery
     }
 }
 
@@ -103,6 +115,16 @@ class MapOverlayController(private val context: Context, val mapView: MapView) {
     private val iconCache = HashMap<String, Drawable>()
     private var currentTiles: TileStyle? = null
 
+    /** Roads and place names over the satellite imagery (created when first needed). */
+    private val labelOverlays: List<org.osmdroid.views.overlay.TilesOverlay> by lazy {
+        TileSources.esriLabels.map { src ->
+            org.osmdroid.views.overlay.TilesOverlay(org.osmdroid.tileprovider.MapTileProviderBasic(context, src), context).apply {
+                loadingBackgroundColor = 0x00000000
+                loadingLineColor = 0x00000000
+            }
+        }
+    }
+
     fun setTileStyle(style: TileStyle) {
         if (style == currentTiles) return
         currentTiles = style
@@ -134,6 +156,7 @@ class MapOverlayController(private val context: Context, val mapView: MapView) {
         overlays.clear()
         overlays.add(events)
         overlays.add(touchWatcher)
+        if (settings.tileStyle == TileStyle.HYBRID) overlays.addAll(labelOverlays)
         // Devices inside a location (closet / rack) are drawn as part of the location's pin.
         val locations = assets.filter { it.isLocation }.associateBy { it.uid }
         val membersOf = assets.filter { !it.isLocation && it.groupUid in locations }.groupBy { it.groupUid }
@@ -160,6 +183,7 @@ class MapOverlayController(private val context: Context, val mapView: MapView) {
         if (settings.showHeatmap) {
             heat.points = heatPoints
             heat.showSurface = settings.showHeatSurface
+            heat.showDots = settings.showHeatDots
             overlays.add(heat)
         }
         if (settings.showPaths) {
@@ -453,6 +477,8 @@ class HeatmapOverlay(private val density: Float, private val onTap: (HeatPoint) 
     var points: List<HeatPoint> = emptyList()
     /** Draw the smooth average-signal surface under the dots. */
     var showSurface: Boolean = true
+    /** Draw the signal dots. */
+    var showDots: Boolean = true
     private val surface = HeatSurface(density)
     private val hit = Point()
 
@@ -484,6 +510,7 @@ class HeatmapOverlay(private val density: Float, private val onTap: (HeatPoint) 
     override fun draw(c: Canvas?, proj: Projection?) {
         if (c == null || proj == null) return
         if (showSurface) surface.draw(c, proj, points)
+        if (!showDots) return
         val bb = proj.boundingBox
         val zoom = proj.zoomLevel
         val radius = (if (zoom >= 18) 9f else if (zoom >= 16) 6f else 4f) * density
