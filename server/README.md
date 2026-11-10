@@ -89,9 +89,11 @@ Open the server address in any browser (Chrome, Edge, Firefox, Safari; desktop o
 the same access key (`SYNC_KEY`). Give the browser a name, such as "Office PC", so you can see who changed what.
 
 - **Map:** street, satellite and topographic layers, showing pins, routes and AP coverage patterns for the chosen site.
-- **Wi-Fi heatmap:** pick *strongest signal*, a single BSSID, or a pin (shows only that AP's radios).
-  Under the dots, **Avg heat** shades the area by the average signal measured within a few metres (turn it off
-  in the top bar, or the Layers dropdown on phones).
+  Pin names appear under the pins once you zoom in. The **◎** button shows where you are (the page must be on https).
+- **Layers** (top bar): what's drawn on the map (pins, pin names, routes, coverage patterns) and the Wi-Fi heatmap.
+  Your ticks are remembered on that browser.
+- **Wi-Fi heatmap:** in **Layers**, pick *strongest signal*, a single BSSID, or a pin (shows only that AP's radios).
+  Under the dots, **Smooth average colour** shades the area by the average signal measured within a few metres.
 - **Pins:** **＋ Pin**, then click the map. Click a pin to edit its type, name, status, details, coverage pattern
   and notes, add photos (HEIC photos are converted to JPEG), or delete it. **Move pin** lets you drag it.
 - **Locations (closets / racks):** several devices in one place show as a single pin with a chip per device type

@@ -100,6 +100,7 @@ class MapOverlayController(private val context: Context, val mapView: MapView) {
     private val touchWatcher = TouchWatcherOverlay(density) { onUserPan() }
     private val heat = HeatmapOverlay(density) { onHeatTap(it) }
     private val patterns = PatternOverlay(density)
+    private val pinLabels = PinLabelOverlay(density)
     private val draftOverlay = DraftOverlay(
         density,
         onTap = { onVertexTap(it) },
@@ -211,6 +212,18 @@ class MapOverlayController(private val context: Context, val mapView: MapView) {
                     overlays.add(buildMarker(shown, it.id == selectedAssetId || moving, draggable = moving))
                 }
             }
+        }
+        if (settings.showAssets && settings.showPinNames) {
+            val selectedAssetId = (selected as? Selection.AssetSel)?.id
+            // Locations draw their own name; devices inside one have no pin of their own.
+            pinLabels.items = assets
+                .filter { !it.isLocation && it.groupUid !in locations && it.type !in settings.hiddenTypes && it.name.isNotBlank() }
+                .map {
+                    val at = shownPoint(it)
+                    PinLabelOverlay.Item(at.lat, at.lon, it.name, it.id == selectedAssetId)
+                }
+                .sortedByDescending { it.selected }
+            if (pinLabels.items.isNotEmpty()) overlays.add(pinLabels)
         }
         // Above the pins so route vertices can be grabbed; taps elsewhere still reach pins (to snap).
         if (drafting) overlays.add(draftOverlay)
@@ -403,6 +416,53 @@ class MapOverlayController(private val context: Context, val mapView: MapView) {
             c.drawText(type.glyph, r, y, paint)
         }
         return BitmapDrawable(context.resources, bmp)
+    }
+}
+
+/**
+ * Pin names under the pins, once the map is zoomed in far enough to read them.
+ * A name that would run into one already drawn is left out, so close pins don't turn into a smear of text.
+ */
+class PinLabelOverlay(private val density: Float) : Overlay() {
+    data class Item(val lat: Double, val lon: Double, val name: String, val selected: Boolean)
+
+    var items: List<Item> = emptyList()
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        typeface = Typeface.DEFAULT_BOLD
+        textSize = 11f * density
+        textAlign = Paint.Align.CENTER
+        strokeJoin = Paint.Join.ROUND
+    }
+    private val pt = Point()
+    private val used = ArrayList<android.graphics.RectF>()
+
+    override fun draw(c: Canvas?, proj: Projection?) {
+        if (c == null || proj == null || proj.zoomLevel < MIN_ZOOM) return
+        used.clear()
+        val margin = 80f * density
+        for (item in items) {
+            proj.toPixels(GeoPoint(item.lat, item.lon), pt)
+            if (pt.x < -margin || pt.y < -margin || pt.x > c.width + margin || pt.y > c.height + margin) continue
+            val label = if (item.name.length > 20) item.name.take(19) + "…" else item.name
+            val half = paint.measureText(label) / 2f + 3f * density
+            val top = pt.y + (if (item.selected) 21f else 16f) * density
+            val box = android.graphics.RectF(pt.x - half, top, pt.x + half, top + 14f * density)
+            if (used.any { android.graphics.RectF.intersects(it, box) }) continue
+            used.add(box)
+            val y = top - paint.ascent()
+            // White halo so the name reads on any map.
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = 3f * density
+            paint.color = 0xFFFFFFFF.toInt()
+            c.drawText(label, pt.x.toFloat(), y, paint)
+            paint.style = Paint.Style.FILL
+            paint.color = 0xFF263238.toInt()
+            c.drawText(label, pt.x.toFloat(), y, paint)
+        }
+    }
+
+    companion object {
+        const val MIN_ZOOM = 17.5
     }
 }
 

@@ -49,6 +49,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
@@ -79,6 +80,8 @@ data class MapSettings(
     val showHeatSurface: Boolean = true,
     /** The heatmap's signal dots (one per surveyed spot). */
     val showHeatDots: Boolean = true,
+    /** Pin names under the pins once zoomed in. */
+    val showPinNames: Boolean = true,
     val tileStyle: TileStyle = TileStyle.STREET,
     val hiddenTypes: Set<AssetType> = emptySet(),
 )
@@ -612,7 +615,46 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     // ---------- Map state ----------
-    val settings = MutableStateFlow(MapSettings())
+    private val mapPrefs = app.getSharedPreferences("map_layers", Context.MODE_PRIVATE)
+
+    /** Layer choices are remembered between app starts (the heatmap itself always starts hidden). */
+    private fun loadMapSettings(): MapSettings {
+        val d = MapSettings()
+        return try {
+            MapSettings(
+                showAssets = mapPrefs.getBoolean("pins", d.showAssets),
+                showPaths = mapPrefs.getBoolean("paths", d.showPaths),
+                showPatterns = mapPrefs.getBoolean("patterns", d.showPatterns),
+                showHeatSurface = mapPrefs.getBoolean("heatSurface", d.showHeatSurface),
+                showHeatDots = mapPrefs.getBoolean("heatDots", d.showHeatDots),
+                showPinNames = mapPrefs.getBoolean("pinNames", d.showPinNames),
+                tileStyle = TileStyle.entries.firstOrNull { it.name == mapPrefs.getString("tiles", null) } ?: d.tileStyle,
+                hiddenTypes = mapPrefs.getStringSet("hiddenTypes", emptySet()).orEmpty()
+                    .mapNotNull { n -> AssetType.entries.firstOrNull { it.name == n } }.toSet(),
+            )
+        } catch (e: Exception) {
+            d
+        }
+    }
+
+    private fun saveMapSettings(s: MapSettings) {
+        mapPrefs.edit()
+            .putBoolean("pins", s.showAssets)
+            .putBoolean("paths", s.showPaths)
+            .putBoolean("patterns", s.showPatterns)
+            .putBoolean("heatSurface", s.showHeatSurface)
+            .putBoolean("heatDots", s.showHeatDots)
+            .putBoolean("pinNames", s.showPinNames)
+            .putString("tiles", s.tileStyle.name)
+            .putStringSet("hiddenTypes", s.hiddenTypes.map { it.name }.toSet())
+            .apply()
+    }
+
+    val settings = MutableStateFlow(loadMapSettings())
+
+    init {
+        viewModelScope.launch { settings.drop(1).collect { saveMapSettings(it) } }
+    }
     val selected = MutableStateFlow<Selection?>(null)
     val focusRequest = MutableStateFlow<GeoPt?>(null)
 

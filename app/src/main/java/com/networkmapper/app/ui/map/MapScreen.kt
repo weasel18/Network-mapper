@@ -829,23 +829,28 @@ private fun HeatLegend(
     onDots: (Boolean) -> Unit = {},
     onSurface: (Boolean) -> Unit = {},
 ) {
+    // Tap the title to fold the options away and leave just the colour key, so more of the map shows.
+    var expanded by rememberSaveable { mutableStateOf(true) }
     Surface(shape = RoundedCornerShape(8.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f), shadowElevation = 3.dp) {
         Column(Modifier.padding(start = 8.dp, top = 2.dp, bottom = 8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    label,
+                    (if (expanded) "▾ " else "▸ ") + label,
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false),
+                    modifier = Modifier
+                        .weight(1f, fill = false)
+                        .clickable { expanded = !expanded }
+                        .padding(vertical = 6.dp),
                 )
                 IconButton(onClick = onClear, modifier = Modifier.size(32.dp)) {
                     Icon(Icons.Default.Close, "Hide heatmap", Modifier.size(16.dp))
                 }
             }
             // Band toggle: All / 2.4 / 5 / 6 GHz.
-            Row(Modifier.padding(end = 8.dp, bottom = 2.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            if (expanded) Row(Modifier.padding(end = 8.dp, bottom = 2.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 com.networkmapper.app.ui.HeatBand.entries.forEach { b ->
                     FilterChip(
                         selected = band == b,
@@ -857,7 +862,7 @@ private fun HeatLegend(
                 Text("GHz", style = MaterialTheme.typography.labelSmall, modifier = Modifier.align(Alignment.CenterVertically))
             }
             // What to draw: the dots, the smooth average colour, or both.
-            Row(Modifier.padding(end = 8.dp, bottom = 2.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            if (expanded) Row(Modifier.padding(end = 8.dp, bottom = 2.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 FilterChip(
                     selected = showDots,
                     onClick = { onDots(!showDots) },
@@ -871,7 +876,9 @@ private fun HeatLegend(
                     modifier = Modifier.height(28.dp),
                 )
             }
-            if (coverage != null) {
+            if (!expanded) {
+                // Folded: only the colour key below.
+            } else if (coverage != null) {
                 Text(
                     buildString {
                         append("${coverage.spots} spots")
@@ -1183,84 +1190,95 @@ private fun AssetCard(
                 }
                 IconButton(onClick = onClose) { Icon(Icons.Default.Close, "Close") }
             }
-            Text(
-                Geo.formatCoord(asset.latitude, asset.longitude) + (asset.accuracy?.let { "  ±${it.toInt()} m" } ?: ""),
-                style = MaterialTheme.typography.bodySmall,
-            )
-            if (location != null) {
-                val me = GeoPt(location.latitude, location.longitude)
-                val there = GeoPt(asset.latitude, asset.longitude)
-                val dist = Geo.distanceMeters(me, there)
-                val bearing = Geo.bearingDegrees(me, there)
+            // The title stays put; everything under it scrolls when the card would cover too much of the map.
+            Column(
+                Modifier
+                    .heightIn(max = cardBodyMaxHeight())
+                    .verticalScroll(rememberScrollState()),
+            ) {
                 Text(
-                    "${Geo.formatDistance(dist)} ${Geo.compassPoint(bearing)} (${bearing.toInt()}°) from you",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
+                    Geo.formatCoord(asset.latitude, asset.longitude) + (asset.accuracy?.let { "  ±${it.toInt()} m" } ?: ""),
+                    style = MaterialTheme.typography.bodySmall,
                 )
-            }
-            Coverage.read(asset.attributes)?.let { p ->
-                Text("Coverage: ${p.summary()}", style = MaterialTheme.typography.bodySmall)
-            }
-            if (asset.notes.isNotBlank()) {
-                Text(asset.notes, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            }
-            photos()
-            if (inLocation != null) {
-                TextButton(onClick = { onOpenLocation(inLocation) }) {
-                    Text("${AssetType.LOCATION.glyph} In ${inLocation.name} – show all devices there")
+                if (location != null) {
+                    val me = GeoPt(location.latitude, location.longitude)
+                    val there = GeoPt(asset.latitude, asset.longitude)
+                    val dist = Geo.distanceMeters(me, there)
+                    val bearing = Geo.bearingDegrees(me, there)
+                    Text(
+                        "${Geo.formatDistance(dist)} ${Geo.compassPoint(bearing)} (${bearing.toInt()}°) from you",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
+                    )
                 }
-            }
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilledTonalButton(onClick = onEdit) {
-                    Icon(Icons.Default.Edit, null)
-                    Spacer(Modifier.width(4.dp))
-                    Text("Details")
+                Coverage.read(asset.attributes)?.let { p ->
+                    Text("Coverage: ${p.summary()}", style = MaterialTheme.typography.bodySmall)
                 }
-                FilledTonalButton(onClick = onNavigate) {
-                    Icon(Icons.Default.Directions, null)
-                    Spacer(Modifier.width(4.dp))
-                    Text("Navigate")
+                if (asset.notes.isNotBlank()) {
+                    Text(asset.notes, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 }
+                photos()
                 if (inLocation != null) {
-                    // Devices move with their location; taking one out makes it a separate pin again.
-                    OutlinedButton(onClick = onTakeOut) {
-                        Icon(Icons.Default.OpenWith, null)
-                        Spacer(Modifier.width(4.dp))
-                        Text("Take out")
-                    }
-                } else {
-                    OutlinedButton(onClick = onMove) {
-                        Icon(Icons.Default.OpenWith, null)
-                        Spacer(Modifier.width(4.dp))
-                        Text("Move")
+                    TextButton(onClick = { onOpenLocation(inLocation) }) {
+                        Text("${AssetType.LOCATION.glyph} In ${inLocation.name} – show all devices there")
                     }
                 }
-            }
-            if (asset.type.bssidField != null) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (signalShowing) {
-                        Button(onClick = onSignal) {
-                            Icon(Icons.Default.WifiOff, null)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilledTonalButton(onClick = onEdit) {
+                        Icon(Icons.Default.Edit, null)
+                        Spacer(Modifier.width(4.dp))
+                        Text("Details")
+                    }
+                    FilledTonalButton(onClick = onNavigate) {
+                        Icon(Icons.Default.Directions, null)
+                        Spacer(Modifier.width(4.dp))
+                        Text("Navigate")
+                    }
+                    if (inLocation != null) {
+                        // Devices move with their location; taking one out makes it a separate pin again.
+                        OutlinedButton(onClick = onTakeOut) {
+                            Icon(Icons.Default.OpenWith, null)
                             Spacer(Modifier.width(4.dp))
-                            Text("Hide signal")
+                            Text("Take out")
                         }
                     } else {
-                        FilledTonalButton(onClick = onSignal) {
-                            Icon(Icons.Default.Wifi, null)
+                        OutlinedButton(onClick = onMove) {
+                            Icon(Icons.Default.OpenWith, null)
                             Spacer(Modifier.width(4.dp))
-                            Text("Signal map")
+                            Text("Move")
                         }
                     }
-                    TextButton(onClick = onLinkRadios) {
-                        Text(if (linkedRadios == 0) "Link radio…" else "$linkedRadios radio${if (linkedRadios == 1) "" else "s"} linked")
+                }
+                if (asset.type.bssidField != null) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (signalShowing) {
+                            Button(onClick = onSignal) {
+                                Icon(Icons.Default.WifiOff, null)
+                                Spacer(Modifier.width(4.dp))
+                                Text("Hide signal")
+                            }
+                        } else {
+                            FilledTonalButton(onClick = onSignal) {
+                                Icon(Icons.Default.Wifi, null)
+                                Spacer(Modifier.width(4.dp))
+                                Text("Signal map")
+                            }
+                        }
+                        TextButton(onClick = onLinkRadios) {
+                            Text(if (linkedRadios == 0) "Link radio…" else "$linkedRadios radio${if (linkedRadios == 1) "" else "s"} linked")
+                        }
                     }
                 }
+                // Live status from the UniFi controller when this pin matches an imported device.
+                if (live != null) UnifiLiveSection(live, onRefreshLive, uplink, downlinks, onJump)
             }
-            // Live status from the UniFi controller when this pin matches an imported device.
-            if (live != null) UnifiLiveSection(live, onRefreshLive, uplink, downlinks, onJump)
         }
     }
 }
+
+/** Tallest the scrolling part of a pin card may be: about 45% of the screen, so the map stays usable above it. */
+@Composable
+private fun cardBodyMaxHeight() = (androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp * 0.45f).dp
 
 /** A closet / rack holding several devices, shown as one pin. */
 @Composable
@@ -1518,7 +1536,9 @@ private fun LayersDialog(
                     }
                 }
                 HorizontalDivider(Modifier.padding(vertical = 6.dp))
+                Text("Show on the map", style = MaterialTheme.typography.titleSmall)
                 CheckRow("Pins", settings.showAssets) { onChange(settings.copy(showAssets = it)) }
+                CheckRow("   Pin names (when zoomed in)", settings.showPinNames) { onChange(settings.copy(showPinNames = it)) }
                 CheckRow("Fiber / link paths", settings.showPaths) { onChange(settings.copy(showPaths = it)) }
                 CheckRow("Wi-Fi signal heatmap", settings.showHeatmap) { onChange(settings.copy(showHeatmap = it)) }
                 CheckRow("   Signal dots", settings.showHeatDots) { onChange(settings.copy(showHeatDots = it)) }

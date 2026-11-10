@@ -30,14 +30,15 @@
       <button id="btn-add-pin" title="Click the map to drop a pin">＋ Pin</button>
       <button id="btn-draw-path" title="Click the map to draw a route">〰 Route</button>
     </div>
-    <span class="sep"></span>
-    <!-- On phones this becomes the dropdown under the Layers button. -->
+    <span id="status" class="muted small"></span>
+    <!-- The dropdown under the Layers button. -->
     <div id="layers-box" class="layers-box">
+      <strong class="small muted">Show on the map</strong>
       <label class="row small"><input type="checkbox" id="chk-pins" checked> Pins</label>
+      <label class="row small" title="Pin names under the pins when zoomed in"><input type="checkbox" id="chk-names" checked> Pin names</label>
       <label class="row small"><input type="checkbox" id="chk-paths" checked> Routes</label>
-      <label class="row small"><input type="checkbox" id="chk-patterns" checked> Coverage</label>
-      <label class="row small" title="The heatmap's signal dots"><input type="checkbox" id="chk-dots" checked> Dots</label>
-      <label class="row small" title="Smooth average signal colour under the heatmap dots"><input type="checkbox" id="chk-surface" checked> Avg heat</label>
+      <label class="row small"><input type="checkbox" id="chk-patterns" checked> Coverage patterns</label>
+      <strong class="small muted">Wi-Fi heatmap</strong>
       <select id="heat-select" title="Wi-Fi heatmap">
         <option value="">Wi-Fi heatmap: off</option>
         <option value="*">Heatmap: strongest signal</option>
@@ -48,9 +49,10 @@
         <option value="5">5 GHz</option>
         <option value="6">6 GHz</option>
       </select>
-      <span id="status" class="muted small"></span>
+      <label class="row small" title="The heatmap's signal dots"><input type="checkbox" id="chk-dots" checked> Signal dots</label>
+      <label class="row small" title="Smooth average signal colour under the heatmap dots"><input type="checkbox" id="chk-surface" checked> Smooth average colour</label>
     </div>
-    <button id="btn-layers" class="mobile-only" title="Layers &amp; heatmap">Layers</button>
+    <button id="btn-layers" title="Layers &amp; Wi-Fi heatmap">Layers</button>
     <button id="btn-more" title="More">☰</button>
   </header>
 

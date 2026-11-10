@@ -247,12 +247,44 @@ function initMap() {
   layers.draft = L.layerGroup().addTo(map);
   layers.pins = L.layerGroup().addTo(map);
   map.on("click", onMapClick);
+  map.on("zoomend", () => { if (showNames() !== S.namesShown && !S.mode) render(); });
+  addLocateControl();
   layers.legend = L.control({ position: "bottomright" });
   layers.legend.onAdd = () => {
     const d = L.DomUtil.create("div", "legend");
     d.innerHTML = "dBm" + [[-50, "≥-50"], [-60, "-60"], [-67, "-67"], [-75, "-75"], [-85, "-85"], [-90, "<-85"]].map(([r, t]) => `<i style="background:${rssiColor(r)}"></i>${t}`).join("");
     return d;
   };
+}
+
+/** "Where am I" button under the zoom buttons: shows a blue dot and follows it until the map is dragged. */
+function addLocateControl() {
+  let dot = null, ring = null, on = false, first = false;
+  const ctl = L.control({ position: "topleft" });
+  ctl.onAdd = () => {
+    const b = L.DomUtil.create("button", "locate-btn");
+    b.type = "button"; b.title = "Show where I am"; b.textContent = "◎";
+    L.DomEvent.disableClickPropagation(b);
+    const stop = () => { on = false; map.stopLocate(); b.classList.remove("on"); if (dot) { dot.remove(); ring.remove(); dot = ring = null; } };
+    b.onclick = () => {
+      if (on) return stop();
+      if (!navigator.geolocation) return toast("This browser can't share its location.");
+      on = true; first = true; b.classList.add("on");
+      map.locate({ watch: true, enableHighAccuracy: true });
+    };
+    map.on("locationfound", (e) => {
+      if (!on) return;
+      if (!dot) {
+        ring = L.circle(e.latlng, { radius: e.accuracy, color: "#1e88e5", weight: 1, fillOpacity: 0.12, interactive: false }).addTo(map);
+        dot = L.marker(e.latlng, { interactive: false, keyboard: false, icon: L.divIcon({ className: "", iconSize: [16, 16], iconAnchor: [11, 11], html: '<div class="me-dot"></div>' }) }).addTo(map);
+      }
+      dot.setLatLng(e.latlng); ring.setLatLng(e.latlng).setRadius(e.accuracy);
+      if (first) { first = false; map.setView(e.latlng, Math.max(map.getZoom(), 18)); }
+    });
+    map.on("locationerror", (e) => { if (!on) return; stop(); toast(location.protocol === "https:" || location.hostname === "localhost" ? "Couldn't get your location: " + e.message.replace(/^Geolocation error: /, "") : "Location needs the page to be opened over https."); });
+    return b;
+  };
+  ctl.addTo(map);
 }
 
 const siteAssets = () => [...S.assets.values()].filter((a) => a.site === S.site);
@@ -322,10 +354,13 @@ function offerPanel(offer, what, separateLabel, onJoin, onSeparate) {
   $("#o-sep").onclick = () => onSeparate().catch((e) => alert(e.message));
 }
 
-function pinIcon(type, selected, offline = false) {
+/** Pin names are drawn under the pins from this zoom level up (when "Pin names" is ticked). */
+const LABEL_ZOOM = 18;
+const showNames = () => $("#chk-names").checked && map.getZoom() >= LABEL_ZOOM;
+function pinIcon(type, selected, offline = false, label = "") {
   const t = ASSET_TYPES[type] || ASSET_TYPES.OTHER;
   return L.divIcon({ className: "", iconSize: [28, 28], iconAnchor: [14, 14],
-    html: `<div class="pin${selected ? " selected" : ""}${offline ? " offline" : ""}" style="background:${t.color}"${offline ? ' title="Offline in UniFi"' : ""}>${glyphHtml(type)}</div>` });
+    html: `<div class="pin-wrap"><div class="pin${selected ? " selected" : ""}${offline ? " offline" : ""}" style="background:${t.color}"${offline ? ' title="Offline in UniFi"' : ""}>${glyphHtml(type)}</div>${label ? `<div class="pin-label">${esc(label)}</div>` : ""}</div>` });
 }
 
 // ---------------------------------------------------------------- UniFi (cloud API, through the server)
@@ -421,6 +456,8 @@ function render() {
   renderSiteSelect();
   layers.pins.clearLayers(); layers.paths.clearLayers(); layers.patterns.clearLayers(); layers.draft.clearLayers();
   const showPins = $("#chk-pins").checked, showPaths = $("#chk-paths").checked, showPatterns = $("#chk-patterns").checked;
+  const names = showNames();
+  S.namesShown = names;
   if (showPaths) {
     for (const p of sitePaths()) {
       if (S.draft && S.draft.editing === p.id) continue;
@@ -445,7 +482,7 @@ function render() {
       }
       const members = isLoc(a) ? membersOf(a) : [];
       const icon = isLoc(a) ? locationIcon(a, members, sel || members.some((x) => S.selected && x.id === S.selected.id), members.some(isOffline))
-        : pinIcon(a.data.type, sel, isOffline(a));
+        : pinIcon(a.data.type, sel, isOffline(a), names ? a.data.name : "");
       const m = L.marker(pos, { icon, draggable: S.mode === "move-pin" && sel, title: a.data.name });
       m.on("click", (e) => { L.DomEvent.stopPropagation(e); onPinClick(a); });
       m.on("dragend", () => { const ll = m.getLatLng(); S.movedTo = [ll.lat, ll.lng]; showHint("Pin moved – Save to keep it", [["Save position", savePinMove], ["Cancel", cancelMode]]); });
@@ -457,7 +494,8 @@ function render() {
     }
   }
   renderDraft();
-  $("#status").textContent = `${siteAssets().length} pins • ${sitePaths().length} routes`;
+  if (!S.heatStatus) $("#status").textContent = `${siteAssets().length} pins • ${sitePaths().length} routes`;
+  $("#btn-layers").classList.toggle("on", !!$("#heat-select").value);
 }
 
 function renderDraft() {
@@ -493,6 +531,7 @@ function cancelMode() {
   if (S.selected) openDetails();
 }
 
+const TOUCH = matchMedia("(pointer: coarse)").matches;
 const closeLayers = () => document.body.classList.remove("layers-open");
 /** Short message at the bottom of the screen. */
 function toast(msg) {
@@ -526,7 +565,7 @@ function select(c, id) { S.selected = { c, id }; render(); openDetails(); }
 
 function startAddPin() {
   cancelMode(); S.mode = "add-pin"; $("#btn-add-pin").classList.add("active");
-  showHint("Click the map where the pin goes", [["Cancel", cancelMode]]);
+  showHint(TOUCH ? "Tap the map where the pin goes" : "Click the map where the pin goes", [["Cancel", cancelMode]]);
 }
 
 function startDraw(kind, editing) {
@@ -539,7 +578,8 @@ function startDraw(kind, editing) {
   render();
 }
 function updateDrawHint() {
-  showHint("Click the map to add points • click a pin to snap • drag points to move • right-click (or Alt-click) a point to delete it",
+  showHint(TOUCH ? "Tap to add points • tap a pin to snap to it • drag a point to move it • long-press a point to delete it"
+    : "Click the map to add points • click a pin to snap • drag points to move • right-click (or Alt-click) a point to delete it",
     [["Undo", () => { S.draft.points.pop(); render(); }], ["Finish", finishDraw], ["Cancel", cancelMode]]);
 }
 
@@ -848,7 +888,12 @@ function openAsset(a) {
   if ($("#f-loc")) $("#f-loc").onclick = (e) => { e.preventDefault(); select("assets", inLoc.id); };
   panel().querySelectorAll("[data-member]").forEach((el) => (el.onclick = () => select("assets", el.dataset.member)));
   if ($("#f-add")) $("#f-add").onclick = () => createPin($("#f-add-type").value, "", [d.lat, d.lon], a.id, [], a.site).catch((e) => alert(e.message));
-  if ($("#f-signal")) $("#f-signal").onclick = () => { $("#heat-select").value = "dev:" + a.id; refreshHeat(); };
+  if ($("#f-signal")) $("#f-signal").onclick = () => {
+    const sel = $("#heat-select"), v = "dev:" + a.id;
+    // The per-pin choices are only listed once a heatmap has been loaded; add this one if it isn't there yet.
+    if (![...sel.options].some((o) => o.value === v)) sel.add(new Option("Pin: " + a.data.name, v));
+    sel.value = v; refreshHeat();
+  };
   wireSave("f-save", a, async () => {
     const attributes = readAttributes();
     // Keep pattern keys in the same format the phones write.
@@ -1049,7 +1094,8 @@ async function refreshHeat() {
   layers.heat.clearLayers();
   layers.surface.setPoints([]);
   const v = $("#heat-select").value;
-  if (!v || !S.site) { layers.legend.remove(); return; }
+  if (!v || !S.site) { layers.legend.remove(); S.heatStatus = false; render(); return; }
+  S.heatStatus = true;
   $("#status").textContent = "Loading Wi-Fi survey…";
   let readings;
   try { readings = await loadReadings(S.site); } catch (e) { $("#status").textContent = e.message; return; }
@@ -1112,20 +1158,37 @@ function fitSite() {
   const pts = [...siteAssets().map((a) => [a.data.lat, a.data.lon]), ...sitePaths().flatMap((p) => decodePoints(p.data.points))];
   if (pts.length) map.fitBounds(pts, { padding: [40, 40], maxZoom: 19 });
 }
+/** New-site / rename form in the side panel. */
+function siteForm(s) {
+  S.selected = null; render();
+  openPanel(`<h2>${s ? "Site name & notes" : "New site"} <button class="close" data-close>✕</button></h2>
+    ${s ? "" : '<p class="muted small">The new site starts where the map is now. Opening it later brings you back here.</p>'}
+    <label>Site name <input id="s-name" value="${esc(s ? s.data.name : "")}" placeholder="e.g. Campus North"></label>
+    <label>Notes <textarea id="s-notes" placeholder="Address, customer, job #">${esc(s ? s.data.notes || "" : "")}</textarea></label>
+    <div class="actions"><button class="primary" id="s-save">${s ? "Save" : "Create site"}</button></div>`);
+  $("#s-name").focus();
+  const save = async () => {
+    const name = $("#s-name").value.trim(), notes = $("#s-notes").value;
+    if (!name) { $("#s-name").focus(); return; }
+    $("#s-save").disabled = true;
+    try {
+      if (s) await push([change("sites", s.id, s.id, "", { ...s.data, name, notes })]);
+      else {
+        const id = uid(), c = map.getCenter();
+        await push([change("sites", id, id, "", { name, notes, createdAt: Date.now(), home: { lat: c.lat, lon: c.lng, zoom: map.getZoom() } })]);
+        S.site = id; localStorage.setItem("nm.site", id); render(); refreshHeat();
+      }
+      closePanel(); toast(s ? "Site saved" : `Site “${name}” created`);
+    } catch (e) { $("#s-save").disabled = false; alert(e.message); }
+  };
+  $("#s-save").onclick = save;
+  $("#s-name").onkeydown = (e) => { if (e.key === "Enter") save(); };
+}
 async function siteAction(action) {
   const s = S.sites.get(S.site);
-  if (action === "site-new") {
-    const name = prompt("New site name"); if (!name) return;
-    const id = uid();
-    // New sites start where the map is now, so opening them goes straight there.
-    const c = map.getCenter();
-    await push([change("sites", id, id, "", { name: name.trim(), notes: "", createdAt: Date.now(), home: { lat: c.lat, lon: c.lng, zoom: map.getZoom() } })]);
-    S.site = id; localStorage.setItem("nm.site", id); render();
-  } else if (action === "site-rename" && s) {
-    const name = prompt("Site name", s.data.name); if (name === null) return;
-    const notes = prompt("Notes (address, customer, job #)", s.data.notes || ""); if (notes === null) return;
-    await push([change("sites", s.id, s.id, "", { ...s.data, name: name.trim() || s.data.name, notes })]);
-  } else if (action === "site-fit") fitSite();
+  if (action === "site-new") siteForm(null);
+  else if (action === "site-rename" && s) siteForm(s);
+  else if (action === "site-fit") fitSite();
   else if (action === "site-home-set" && s) {
     const c = map.getCenter();
     await push([change("sites", s.id, s.id, "", { ...s.data, home: { lat: c.lat, lon: c.lng, zoom: map.getZoom() } })]);
@@ -1221,9 +1284,20 @@ window.addEventListener("DOMContentLoaded", () => {
       <div class="actions"><button class="primary" id="d-go">Start drawing</button></div>`);
     $("#d-go").onclick = () => startDraw($("#d-kind").value, null);
   };
-  ["#chk-pins", "#chk-paths", "#chk-patterns"].forEach((s) => ($(s).onchange = render));
-  $("#chk-surface").onchange = refreshHeat;
-  $("#chk-dots").onchange = refreshHeat;
+  // Layer ticks are remembered on this browser.
+  const remember = (sel, fn) => {
+    const el = $(sel), k = "nm.layer." + sel.slice(5);
+    try { const v = localStorage.getItem(k); if (v !== null) el.checked = v === "1"; } catch (e) { /* storage blocked */ }
+    el.onchange = () => { try { localStorage.setItem(k, el.checked ? "1" : "0"); } catch (e) { /* ignore */ } fn(); };
+  };
+  ["#chk-pins", "#chk-names", "#chk-paths", "#chk-patterns"].forEach((s) => remember(s, render));
+  ["#chk-surface", "#chk-dots"].forEach((s) => remember(s, refreshHeat));
+  // A click anywhere else closes the open menu or the Layers dropdown.
+  document.addEventListener("pointerdown", (e) => {
+    if (e.target.closest(".menu, #btn-more, #btn-site-menu, #layers-box, #btn-layers")) return;
+    $("#menu").classList.add("hidden"); $("#site-menu").classList.add("hidden");
+    if (!e.target.closest("#map")) closeLayers(); // the map closes it itself (without also acting on the click)
+  });
   $("#band-select").onchange = refreshHeat;
   $("#heat-select").onchange = refreshHeat;
   $("#site-select").onchange = () => { S.site = $("#site-select").value; localStorage.setItem("nm.site", S.site); S.selected = null; closePanel(); render(); openSiteView(); refreshHeat(); };
