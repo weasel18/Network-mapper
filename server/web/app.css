@@ -1,9 +1,8 @@
+/* "Night ops" look: dark everywhere, amber accent, big controls. */
 :root {
-  --bg: #f6f7f9; --card: #fff; --text: #1d2330; --muted: #667085; --line: #d9dde3;
-  --primary: #0d47a1; --primary-text: #fff; --danger: #c62828; --ok: #2e7d32;
-}
-@media (prefers-color-scheme: dark) {
-  :root { --bg: #14171c; --card: #1e232b; --text: #e7eaf0; --muted: #98a2b3; --line: #343b46; --primary: #90caf9; --primary-text: #0d1b2e; }
+  --bg: #0F151C; --card: #18212B; --raised: #212C38; --text: #EEF2F6; --muted: #A9B4C0; --line: #36424F;
+  --primary: #FFB547; --primary-text: #0F151C; --danger: #FF6B6B; --ok: #6FE08A;
+  color-scheme: dark;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: var(--text); background: var(--bg); }
@@ -25,6 +24,7 @@ button { cursor: pointer; }
 button:hover { border-color: var(--primary); }
 button.primary { background: var(--primary); color: var(--primary-text); border-color: var(--primary); }
 button.danger { color: var(--danger); }
+a { color: var(--primary); }
 button.active { background: var(--primary); color: var(--primary-text); }
 textarea { width: 100%; min-height: 70px; }
 code { font-size: 12px; }
@@ -129,14 +129,14 @@ main { position: fixed; top: 48px; left: 0; right: 0; bottom: 0; }
 .loc-pin .wifi-ico { vertical-align: -2px; }
 /* Save buttons: grey while saving, green once saved (until something is edited again) */
 button:disabled { opacity: .55; cursor: default; }
-button.primary.saved { background: #2e7d32; border-color: #2e7d32; color: #fff; }
+button.primary.saved { background: var(--ok); border-color: var(--ok); color: #0F151C; }
 
 /* UniFi status */
 .pin.offline { box-shadow: 0 0 0 3px #e53935, 0 1px 4px rgba(0,0,0,.4); }
 .loc-pin.offline { border-color: #e53935; box-shadow: 0 0 0 2px #e53935; }
 .unifi-grid { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; font-size: 13px; }
 .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; }
-.dot.on { background: #2e7d32; } .dot.off { background: #e53935; }
+.dot.on { background: var(--ok); } .dot.off { background: var(--danger); }
 h3 button.small { font-size: 12px; padding: 2px 8px; margin-left: 8px; font-weight: normal; }
 
 .heat-surface { position: absolute; left: 0; top: 0; }
@@ -173,3 +173,81 @@ body.layers-open #btn-layers.on { color: var(--primary-text); }
 
 .list-item .muted.small { margin-left: 4px; }
 .status-tag { display: inline-block; padding: 0 6px; border-radius: 8px; font-size: 11px; background: rgba(127,127,127,.18); }
+
+/* ================= Night ops theme ================= */
+button, select, input, textarea { border-radius: 10px; background: var(--raised); }
+button.primary { font-weight: 700; }
+.topbar { background: var(--bg); border-bottom-color: #26313E; }
+.topbar button, .topbar select { background: var(--card); }
+#site-select { border-radius: 20px; padding: 7px 12px; font-weight: 600; }
+.card, .panel, .menu, body.layers-open .layers-box { background: var(--card); }
+.menu button { background: transparent; }
+.menu button:hover { background: var(--raised); }
+.hint button { background: var(--bg); color: var(--text); border-color: transparent; }
+.toast { background: var(--raised); color: var(--text); border: 1px solid var(--line); }
+.chip { background: var(--raised); }
+.status-tag { background: var(--raised); }
+.legend { background: var(--card); }
+.lb-bar { background: var(--card); }
+
+/* Pins: rounded squares with a dark rim, readable on the dark map */
+.pin { border-radius: 9px; border: 2px solid #0F151C; line-height: 24px; box-shadow: 0 0 0 1px rgba(255,255,255,.25), 0 2px 6px rgba(0,0,0,.6); }
+.pin.selected { outline: 3px solid var(--primary); outline-offset: 2px; }
+.pin.offline { box-shadow: 0 0 0 3px var(--danger), 0 2px 6px rgba(0,0,0,.6); }
+.pin.mini { border-radius: 6px; }
+.loc-pin { background: #0F151C; border: 1.5px solid #5C6B7C; border-radius: 12px; padding: 3px; }
+.loc-pin span { border-radius: 8px; }
+.loc-pin.selected { outline: 3px solid var(--primary); outline-offset: 2px; }
+.loc-pin.offline { border-color: var(--danger); box-shadow: 0 0 0 2px var(--danger); }
+.vertex { background: var(--primary); border-color: #0F151C; }
+/* Names: light on the dark map, dark on a light one */
+.pin-label, .loc-label { color: #263238; text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 3px #fff, 0 0 2px #fff; }
+body.dark-map .pin-label, body.dark-map .loc-label { color: #EEF2F6; text-shadow: 0 0 3px #0F151C, 0 0 3px #0F151C, 0 0 3px #0F151C, 0 0 2px #0F151C; }
+
+/* Dark street map: the ordinary map tiles with their lightness flipped */
+#map { background: #0F151C; }
+body.dark-map .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(.92) contrast(.88) saturate(.7); }
+
+/* Leaflet's own controls */
+.leaflet-bar, .leaflet-control-layers { border: 1px solid var(--line) !important; border-radius: 12px !important; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,.5) !important; }
+.leaflet-bar a, .leaflet-control-layers, .locate-btn { background: var(--card) !important; color: var(--text) !important; border-color: var(--line) !important; }
+.leaflet-bar a:hover { background: var(--raised) !important; }
+.leaflet-control-layers-toggle { filter: invert(1) hue-rotate(180deg); }
+.leaflet-control-layers-expanded { padding: 10px 12px !important; color: var(--text); }
+.locate-btn { width: 40px; height: 40px; border: 1px solid var(--line) !important; border-radius: 12px; }
+.locate-btn.on { color: var(--primary) !important; border-color: var(--primary) !important; }
+.leaflet-control-attribution { background: rgba(15,21,28,.75) !important; color: var(--muted) !important; }
+.leaflet-control-attribution a { color: var(--muted) !important; }
+.leaflet-control-scale-line { background: rgba(15,21,28,.7) !important; color: var(--text) !important; border-color: var(--muted) !important; text-shadow: none !important; }
+.leaflet-tooltip { background: var(--card); color: var(--text); border-color: var(--line); box-shadow: 0 2px 8px rgba(0,0,0,.5); }
+.leaflet-tooltip-top:before { border-top-color: var(--line); } .leaflet-tooltip-bottom:before { border-bottom-color: var(--line); }
+.leaflet-tooltip-left:before { border-left-color: var(--line); } .leaflet-tooltip-right:before { border-right-color: var(--line); }
+
+/* Bottom tabs (phones) and the pull-up sheet */
+.tabs { display: none; }
+.grab { display: none; }
+@media (max-width: 700px) {
+  #btn-layers, #btn-more { display: none; }
+  main { bottom: calc(64px + env(safe-area-inset-bottom)); }
+  .tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); position: fixed; left: 0; right: 0; bottom: 0; z-index: 1200;
+    height: calc(64px + env(safe-area-inset-bottom)); padding-bottom: env(safe-area-inset-bottom); background: var(--bg); border-top: 1px solid #26313E; }
+  .tabs button { border: 0; border-radius: 0; background: transparent; color: var(--muted); font-size: 11.5px; font-weight: 500;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; padding: 0; }
+  .tabs button.on { color: var(--primary); font-weight: 700; }
+  .tabs svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .fab-bar { bottom: calc(160px + env(safe-area-inset-bottom)); }
+  .fab-bar button { border-radius: 14px; color: var(--primary-text); }
+  /* Layers and More open as sheets just above the tabs */
+  body.layers-open .layers-box, .menu { top: auto; bottom: calc(72px + env(safe-area-inset-bottom)); left: 8px; right: 8px; width: auto;
+    max-height: calc(100% - 150px); overflow-y: auto; border-radius: 16px; }
+  #site-menu { top: 52px; bottom: auto; right: auto; }
+  /* The sheet: half height, pull the bar up for the whole thing, down to close */
+  .panel { height: 50%; bottom: 0; border-radius: 22px 22px 0 0; border-top: 1px solid var(--line); box-shadow: 0 -8px 28px rgba(0,0,0,.5);
+    transition: height .22s ease; }
+  .panel.tall { height: calc(100% - 8px); }
+  .panel h2 { padding-top: 22px; touch-action: none; cursor: grab; }
+  .grab { display: block; position: absolute; left: 50%; top: 8px; width: 40px; height: 5px; margin-left: -20px; border-radius: 3px; background: #5C6B7C; }
+  .toast { bottom: calc(84px + env(safe-area-inset-bottom)); }
+}
+
+input[type=checkbox], input[type=radio] { accent-color: var(--primary); }

@@ -222,6 +222,10 @@ const HeatSurfaceLayer = L.Layer.extend({
     ctx.drawImage(small, -off, -off, gw * cell, gh * cell);
   },
 });
+/** Street and topographic tiles are shown in dark colours (unless unticked in Layers); satellite is left alone. */
+function applyDarkMap() {
+  document.body.classList.toggle("dark-map", $("#chk-darkmap").checked && !String(S.base || "").startsWith("Satellite"));
+}
 function initMap() {
   map = L.map("map", { preferCanvas: true, zoomControl: true }).setView([39.5, -98.35], 4);
   baseLayers = {
@@ -238,7 +242,8 @@ function initMap() {
   try { if (baseLayers[localStorage.getItem("nm.base")]) base = localStorage.getItem("nm.base"); } catch (e) { /* storage blocked */ }
   baseLayers[base].addTo(map);
   L.control.layers(baseLayers, null, { position: "bottomleft" }).addTo(map);
-  map.on("baselayerchange", (e) => { try { localStorage.setItem("nm.base", e.name); } catch (err) { /* ignore */ } });
+  S.base = base;
+  map.on("baselayerchange", (e) => { S.base = e.name; applyDarkMap(); try { localStorage.setItem("nm.base", e.name); } catch (err) { /* ignore */ } });
   L.control.scale({ position: "bottomright" }).addTo(map);
   layers.surface = new HeatSurfaceLayer().addTo(map);
   layers.heat = L.layerGroup().addTo(map);
@@ -532,7 +537,7 @@ function cancelMode() {
 }
 
 const TOUCH = matchMedia("(pointer: coarse)").matches;
-const closeLayers = () => document.body.classList.remove("layers-open");
+const closeLayers = () => { if (document.body.classList.contains("layers-open") && S.tabOn) S.tabOn("map"); document.body.classList.remove("layers-open"); };
 /** Short message at the bottom of the screen. */
 function toast(msg) {
   const t = document.createElement("div");
@@ -649,8 +654,30 @@ function wireSave(id, rec, doSave) {
     }
   };
 }
-function closePanel() { panel().classList.add("hidden"); panel().innerHTML = ""; document.body.classList.remove("panel-open"); }
-function openPanel(html) { panel().oninput = panel().onchange = null; panel().innerHTML = html; panel().classList.remove("hidden"); document.body.classList.add("panel-open"); closeLayers(); panel().querySelectorAll("[data-close]").forEach((b) => (b.onclick = () => { S.selected = null; if (S.mode) cancelMode(); closePanel(); render(); })); }
+function closePanel() { panel().classList.add("hidden"); panel().classList.remove("tall"); panel().innerHTML = ""; document.body.classList.remove("panel-open"); if (S.tabOn) S.tabOn("map"); }
+/**
+ * On phones the panel is a sheet: drag its title bar up to open it fully, down to shrink it again (or close it), or tap the bar.
+ */
+function wireSheet() {
+  const h = panel().querySelector("h2");
+  if (!h) return;
+  const grab = document.createElement("span"); grab.className = "grab"; h.prepend(grab);
+  let y0 = null, moved = 0;
+  h.onpointerdown = (e) => { if (e.target.closest("button, a, input, select")) return; y0 = e.clientY; moved = 0; try { h.setPointerCapture(e.pointerId); } catch (err) { /* not capturable */ } };
+  h.onpointermove = (e) => { if (y0 !== null) moved = e.clientY - y0; };
+  h.onpointerup = h.onpointercancel = () => {
+    if (y0 === null) return;
+    y0 = null;
+    if (!matchMedia("(max-width: 700px)").matches) return;
+    const tall = panel().classList.contains("tall");
+    if (moved < -25 || (Math.abs(moved) < 6 && !tall)) panel().classList.add("tall");
+    else if (moved > 25 || Math.abs(moved) < 6) {
+      if (tall) panel().classList.remove("tall");
+      else if (moved > 60) panel().querySelector("[data-close]")?.click(); // pulled well down from half height: close
+    }
+  };
+}
+function openPanel(html) { panel().oninput = panel().onchange = null; panel().innerHTML = html; panel().classList.remove("hidden"); document.body.classList.add("panel-open"); closeLayers(); wireSheet(); panel().querySelectorAll("[data-close]").forEach((b) => (b.onclick = () => { S.selected = null; if (S.mode) cancelMode(); closePanel(); render(); })); }
 
 function optionList(items, current) { return items.map(([v, l]) => `<option value="${esc(v)}"${v === current ? " selected" : ""}>${esc(l)}</option>`).join(""); }
 
@@ -1237,7 +1264,7 @@ async function exportCsv() {
 
 async function start() {
   $("#login").classList.add("hidden");
-  ["#topbar", "#main"].forEach((s) => $(s).classList.remove("hidden"));
+  ["#topbar", "#main", "#tabs"].forEach((s) => $(s).classList.remove("hidden"));
   if (!map) initMap();
   S.site = localStorage.getItem("nm.site") || "";
   $("#status").textContent = "Loading…";
@@ -1292,10 +1319,24 @@ window.addEventListener("DOMContentLoaded", () => {
   };
   ["#chk-pins", "#chk-names", "#chk-paths", "#chk-patterns"].forEach((s) => remember(s, render));
   ["#chk-surface", "#chk-dots"].forEach((s) => remember(s, refreshHeat));
+  remember("#chk-darkmap", applyDarkMap);
+  applyDarkMap();
+  // Bottom tabs (phones).
+  const tabOn = (t) => document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === t));
+  S.tabOn = tabOn;
+  document.querySelectorAll("#tabs button").forEach((b) => (b.onclick = () => {
+    const t = b.dataset.tab, wasLayers = document.body.classList.contains("layers-open"), wasMenu = !$("#menu").classList.contains("hidden");
+    closeLayers(); $("#menu").classList.add("hidden"); $("#site-menu").classList.add("hidden");
+    if (t === "map") { if (S.mode) cancelMode(); S.selected = null; closePanel(); render(); tabOn("map"); }
+    else if (t === "list") { openList(); tabOn("list"); }
+    else if (t === "layers") { if (!wasLayers) document.body.classList.add("layers-open"); tabOn(wasLayers ? "map" : "layers"); }
+    else if (t === "more") { if (!wasMenu) $("#menu").classList.remove("hidden"); tabOn(wasMenu ? "map" : "more"); }
+  }));
   // A click anywhere else closes the open menu or the Layers dropdown.
   document.addEventListener("pointerdown", (e) => {
-    if (e.target.closest(".menu, #btn-more, #btn-site-menu, #layers-box, #btn-layers")) return;
+    if (e.target.closest(".menu, #btn-more, #btn-site-menu, #layers-box, #btn-layers, #tabs")) return;
     $("#menu").classList.add("hidden"); $("#site-menu").classList.add("hidden");
+    if (!document.body.classList.contains("layers-open") || !e.target.closest("#map")) tabOn("map");
     if (!e.target.closest("#map")) closeLayers(); // the map closes it itself (without also acting on the click)
   });
   $("#band-select").onchange = refreshHeat;
