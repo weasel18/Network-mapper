@@ -166,7 +166,7 @@ function rampColor(v) {
   return RAMP[RAMP.length - 1][1];
 }
 const HeatSurfaceLayer = L.Layer.extend({
-  SIGMA_M: 5,
+  SIGMA_M: 2.5, // readings are averaged over about this many metres; the colour reaches about twice as far
   initialize() { this.points = []; },
   setPoints(points) { this.points = points; if (this._map) this._redraw(); return this; },
   onAdd(m) {
@@ -192,7 +192,7 @@ const HeatSurfaceLayer = L.Layer.extend({
     if (pxPerM < 0.02) return; // zoomed far out: dots only
     const sigmaPx = this.SIGMA_M * pxPerM, pad = 3 * sigmaPx;
     // The grid reaches `pad` beyond the screen so readings just off-screen still colour the edges.
-    const cell = Math.max(4, Math.ceil((Math.max(size.x, size.y) + 2 * pad) / 360));
+    const cell = Math.max(3, Math.ceil((Math.max(size.x, size.y) + 2 * pad) / 480));
     const off = Math.ceil(pad / cell) * cell;
     const gw = Math.ceil((size.x + 2 * off) / cell), gh = Math.ceil((size.y + 2 * off) / cell);
     const sum = new Float32Array(gw * gh), cnt = new Float32Array(gw * gh);
@@ -209,13 +209,22 @@ const HeatSurfaceLayer = L.Layer.extend({
       for (let y = 0; y < gh; y++) for (let x = 0; x < gw; x++) { let s = 0; for (let i = -r; i <= r; i++) { const xx = x + i; if (xx >= 0 && xx < gw) s += v[y * gw + xx] * k[i + r]; } t[y * gw + x] = s; }
       for (let y = 0; y < gh; y++) for (let x = 0; x < gw; x++) { let s = 0; for (let i = -r; i <= r; i++) { const yy = y + i; if (yy >= 0 && yy < gh) s += t[yy * gw + x] * k[i + r]; } v[y * gw + x] = s; }
     };
+    // Closeness to the nearest reading (1 at a reading). The colour is only drawn near readings, however many there
+    // are; adding readings up would make dense areas spread wider.
+    const near = Float32Array.from(cnt, (c) => (c > 0 ? 1 : 0));
+    {
+      const t = new Float32Array(near.length);
+      for (let y = 0; y < gh; y++) for (let x = 0; x < gw; x++) { let s = 0; for (let i = -r; i <= r; i++) { const xx = x + i; if (xx >= 0 && xx < gw) s = Math.max(s, near[y * gw + xx] * k[i + r]); } t[y * gw + x] = s; }
+      for (let y = 0; y < gh; y++) for (let x = 0; x < gw; x++) { let s = 0; for (let i = -r; i <= r; i++) { const yy = y + i; if (yy >= 0 && yy < gh) s = Math.max(s, t[yy * gw + x] * k[i + r]); } near[y * gw + x] = s; }
+    }
     blur(sum); blur(cnt);
     const small = document.createElement("canvas"); small.width = gw; small.height = gh;
     const sctx = small.getContext("2d"), img = sctx.createImageData(gw, gh);
     for (let i = 0; i < gw * gh; i++) {
-      if (cnt[i] < 0.06) continue;
+      const cover = Math.min(1, Math.max(0, (near[i] - 0.14) / 0.46)); // solid ~1 sigma from a reading, gone by ~2
+      if (cover <= 0 || cnt[i] <= 0) continue;
       const [rr, gg, bb] = rampColor(sum[i] / cnt[i]);
-      img.data.set([rr, gg, bb, Math.round(Math.min(1, cnt[i]) * 150)], i * 4);
+      img.data.set([rr, gg, bb, Math.round(cover * 150)], i * 4);
     }
     sctx.putImageData(img, 0, 0);
     ctx.imageSmoothingEnabled = true;

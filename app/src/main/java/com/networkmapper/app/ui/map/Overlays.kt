@@ -846,8 +846,8 @@ object WifiGlyph {
 }
 
 /**
- * Smooth "average signal" colour surface: readings are averaged over a few metres (Gaussian weighting) and
- * coloured with the signal ramp, fading out where there are no readings. Built once per zoom level as a small
+ * Smooth "average signal" colour surface: readings are averaged over a couple of metres (Gaussian weighting) and
+ * coloured with the signal ramp. It only reaches about 5 m from the nearest reading. Built once per zoom level as a small
  * bitmap and stretched while panning / pinching.
  */
 class HeatSurface(private val density: Float) {
@@ -900,7 +900,7 @@ class HeatSurface(private val density: Float) {
         proj.toPixels(GeoPoint(s, e), b)
         val widthPx = (b.x - ax).toFloat().coerceAtLeast(1f)
         val heightPx = (b.y - ay).toFloat().coerceAtLeast(1f)
-        var cell = 4f * density
+        var cell = 2.5f * density
         while (widthPx / cell > MAX_CELLS || heightPx / cell > MAX_CELLS) cell *= 1.5f
         val gw = kotlin.math.ceil(widthPx / cell).toInt().coerceAtLeast(1)
         val gh = kotlin.math.ceil(heightPx / cell).toInt().coerceAtLeast(1)
@@ -915,13 +915,19 @@ class HeatSurface(private val density: Float) {
             cnt[y * gw + x] += 1f
         }
         val sigmaCells = (sigmaM * pxPerM / cell).toFloat().coerceAtLeast(0.8f)
+        // How close each cell is to its nearest reading (1 at a reading, falling off with distance). The colour is
+        // only drawn near readings, however many there are; adding up readings would make dense areas spread wider.
+        val near = FloatArray(gw * gh) { i -> if (cnt[i] > 0f) 1f else 0f }
+        spread(near, gw, gh, sigmaCells)
         blur(sum, gw, gh, sigmaCells)
         blur(cnt, gw, gh, sigmaCells)
         val pixels = IntArray(gw * gh)
         for (i in pixels.indices) {
+            // Solid within about one SIGMA_M of a reading, gone by about two.
+            val cover = ((near[i] - FADE_END) / (FADE_START - FADE_END)).coerceIn(0f, 1f)
             val weight = cnt[i]
-            if (weight < 0.06f) continue
-            val alpha = (weight.coerceAtMost(1f) * 150).toInt()
+            if (cover <= 0f || weight <= 0f) continue
+            val alpha = (cover * 150).toInt()
             pixels[i] = (alpha shl 24) or com.networkmapper.app.util.Wifi.rssiColorSmooth((sum[i] / weight).toDouble())
         }
         bmp = Bitmap.createBitmap(pixels, gw, gh, Bitmap.Config.ARGB_8888)
@@ -931,6 +937,29 @@ class HeatSurface(private val density: Float) {
         west = w
         south = se.latitude
         east = se.longitude
+    }
+
+    /** Like [blur] but takes the largest weighted neighbour instead of adding them: closeness to the nearest reading. */
+    private fun spread(v: FloatArray, w: Int, h: Int, sigma: Float) {
+        val r = kotlin.math.ceil(3 * sigma).toInt()
+        val k = FloatArray(2 * r + 1) { i -> val d = (i - r).toFloat(); kotlin.math.exp(-(d * d) / (2 * sigma * sigma)) }
+        val tmp = FloatArray(v.size)
+        for (y in 0 until h) for (x in 0 until w) {
+            var best = 0f
+            for (i in -r..r) {
+                val xx = x + i
+                if (xx in 0 until w) best = maxOf(best, v[y * w + xx] * k[i + r])
+            }
+            tmp[y * w + x] = best
+        }
+        for (y in 0 until h) for (x in 0 until w) {
+            var best = 0f
+            for (i in -r..r) {
+                val yy = y + i
+                if (yy in 0 until h) best = maxOf(best, tmp[yy * w + x] * k[i + r])
+            }
+            v[y * w + x] = best
+        }
     }
 
     /** Separable Gaussian blur with peak weight 1 (a lone reading keeps weight 1 at its own cell). */
@@ -958,7 +987,10 @@ class HeatSurface(private val density: Float) {
 
     companion object {
         /** How far (metres) each reading's influence spreads. */
-        const val SIGMA_M = 5.0
-        private const val MAX_CELLS = 360f
+        const val SIGMA_M = 2.5
+        private const val MAX_CELLS = 520f
+        /** Closeness to the nearest reading at which the colour is solid (~1 sigma away) and gone (~2 sigma away). */
+        private const val FADE_START = 0.6f
+        private const val FADE_END = 0.14f
     }
 }
