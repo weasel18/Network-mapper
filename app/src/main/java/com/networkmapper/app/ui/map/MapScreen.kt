@@ -8,7 +8,19 @@ import android.location.Location
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.material.icons.filled.Map
+import androidx.compose.material.icons.filled.MoreHoriz
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
+import com.networkmapper.app.ui.theme.Night
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -291,7 +303,7 @@ fun MapScreen(
         overlays.onVertexDrag = { i, pt -> vm.moveDraftPoint(i, pt) }
     }
 
-    LaunchedEffect(settings.tileStyle) { overlays.setTileStyle(settings.tileStyle) }
+    LaunchedEffect(settings.tileStyle, settings.darkMap) { overlays.setTileStyle(settings.tileStyle, settings.darkMap) }
     val drafting = draft != null
     val editingPathId = draft?.editingPathId
     LaunchedEffect(assets, paths, settings, drafting, editingPathId, heat, selected, pinMove) {
@@ -353,33 +365,76 @@ fun MapScreen(
         }
     }
 
+    val addPinHere: () -> Unit = {
+        val loc = location
+        if (loc == null) {
+            Toast.makeText(context, "No GPS fix yet – long-press the map to place a pin manually", Toast.LENGTH_LONG).show()
+        } else {
+            pendingPin = PendingPin(
+                GeoPt(loc.latitude, loc.longitude),
+                if (loc.hasAccuracy()) loc.accuracy else null,
+                if (loc.hasAltitude()) loc.altitude else null,
+                fromGps = true,
+            )
+        }
+    }
+    var showAdd by remember { mutableStateOf(false) }
+
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            TopAppBar(
-                title = {
-                    // Site switcher: tap the name to open, create or manage sites.
+            // Site switcher and, while a survey runs, its status.
+            Surface(color = MaterialTheme.colorScheme.background) {
+                Column {
                     Row(
-                        Modifier.clickable(onClick = onOpenSites),
+                        Modifier
+                            .statusBarsPadding()
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        Column(Modifier.weight(1f, fill = false)) {
-                            Text(
-                                currentSite?.name ?: "Network Mapper",
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
+                        SitePill(
+                            name = currentSite?.name ?: "Network Mapper",
+                            subtitle = "${assets.size} pin${if (assets.size == 1) "" else "s"} · ${paths.size} route${if (paths.size == 1) "" else "s"}",
+                            onClick = onOpenSites,
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (surveyRunning) {
+                            val gap by SurveyState.actualScanGapMs.collectAsStateWithLifecycle()
+                            val refused by SurveyState.refusedScans.collectAsStateWithLifecycle()
+                            SurveyChip(
+                                text = "Surveying · $surveyReadings" + (gap?.let { " · ~${(it + 500) / 1000} s" } ?: "") + if (refused > 0) " ⚠" else "",
+                                onClick = onOpenWifi,
                             )
-                            Text("Tap for sites", style = MaterialTheme.typography.labelSmall)
                         }
-                        Icon(Icons.Default.ArrowDropDown, "Switch site")
                     }
-                },
-                actions = {
-                    IconButton(onClick = { showLayers = true }) { Icon(Icons.Default.Layers, "Layers") }
-                    IconButton(onClick = onOpenList) { Icon(Icons.AutoMirrored.Filled.List, "List") }
-                    IconButton(onClick = onOpenWifi) { Icon(Icons.Default.Wifi, "Wi-Fi survey") }
-                    Box {
-                        IconButton(onClick = { showMenu = true }) { Icon(Icons.Default.MoreVert, "More") }
-                        DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                }
+            }
+        },
+        bottomBar = {
+            Surface(color = MaterialTheme.colorScheme.background) {
+                Column {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    Row(
+                        Modifier
+                            .navigationBarsPadding()
+                            .fillMaxWidth()
+                            .height(64.dp),
+                    ) {
+                        val tab = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                        TabItem(Icons.Default.Map, "Map", true, {
+                            vm.select(null)
+                            vm.closeSpot()
+                        }, tab)
+                        TabItem(Icons.AutoMirrored.Filled.List, "Pins", false, onOpenList, tab)
+                        TabItem(Icons.Default.Wifi, "Survey", false, onOpenWifi, tab)
+                        Box(tab) {
+                            TabItem(Icons.Default.MoreHoriz, "More", false, { showMenu = true }, Modifier.fillMaxSize())
+                            DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
                             DropdownMenuItem(text = { Text("Sites – open, save & load…") }, onClick = {
                                 showMenu = false
                                 onOpenSites()
@@ -414,10 +469,11 @@ fun MapScreen(
                                     Toast.makeText(context, "Start view cleared – the site opens zoomed to its pins", Toast.LENGTH_SHORT).show()
                                 })
                             }
+                            }
                         }
                     }
-                },
-            )
+                }
+            }
         },
     ) { padding ->
         Box(
@@ -427,24 +483,14 @@ fun MapScreen(
         ) {
             AndroidView(factory = { mapView }, modifier = Modifier.fillMaxSize())
 
-            // ---- Top status chips ----
+            // ---- Top-left: GPS and the heatmap key ----
             Column(
                 Modifier
                     .align(Alignment.TopStart)
-                    .padding(8.dp),
+                    .padding(start = 10.dp, top = 10.dp, end = 72.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 GpsChip(location, hasLocationPermission, onRequestPermission)
-                if (surveyRunning) {
-                    val gap by SurveyState.actualScanGapMs.collectAsStateWithLifecycle()
-                    val refused by SurveyState.refusedScans.collectAsStateWithLifecycle()
-                    StatusChip(
-                        text = "● Surveying – $surveyReadings readings" +
-                            (gap?.let { " • scan ~${(it + 500) / 1000} s" } ?: "") + if (refused > 0) " ⚠" else "",
-                        color = Color(0xFFC62828),
-                        onClick = onOpenWifi,
-                    )
-                }
                 if (settings.showHeatmap) {
                     val legendLabel = (heatFilter as? HeatFilter.Bssid)?.let { f ->
                         "AP: ${apNames[f.bssid] ?: f.ssid.ifEmpty { "(hidden)" }}"
@@ -459,20 +505,19 @@ fun MapScreen(
                 }
             }
 
-            // ---- Bottom area ----
+
+            // ---- Right-hand tool rail ----
             Column(
                 Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .padding(12.dp),
-                horizontalAlignment = Alignment.End,
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                    .align(Alignment.TopEnd)
+                    .padding(10.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                val d = draft
-                val selAsset = (selected as? Selection.AssetSel)?.let { s -> assets.firstOrNull { it.id == s.id } }
-                val selPath = (selected as? Selection.PathSel)?.let { s -> paths.firstOrNull { it.id == s.id } }
-
-                SmallFloatingActionButton(onClick = {
+                RailButton(Icons.Default.Layers, "Map layers") { showLayers = true }
+                RailButton(Icons.Default.Wifi, "Wi-Fi heatmap", active = settings.showHeatmap) {
+                    if (settings.showHeatmap) vm.clearHeatmap() else vm.updateSettings { it.copy(showHeatmap = true) }
+                }
+                RailButton(if (follow) Icons.Default.GpsFixed else Icons.Default.MyLocation, "My location", active = follow) {
                     val loc = location
                     if (loc == null) {
                         Toast.makeText(context, "Waiting for GPS fix…", Toast.LENGTH_SHORT).show()
@@ -480,11 +525,60 @@ fun MapScreen(
                         follow = true
                         mapView.controller.animateTo(GeoPoint(loc.latitude, loc.longitude), maxOf(mapView.zoomLevelDouble, 18.0), 500L)
                     }
-                }) {
-                    Icon(if (follow) Icons.Default.GpsFixed else Icons.Default.MyLocation, "My location")
                 }
+                if (draft == null && pinMove == null) {
+                    Box {
+                        RailButton(Icons.Default.Add, "Add a pin, photo or route", accent = true) { showAdd = true }
+                        DropdownMenu(expanded = showAdd, onDismissRequest = { showAdd = false }) {
+                            DropdownMenuItem(
+                                text = { Text("Pin where I'm standing") },
+                                leadingIcon = { Icon(Icons.Default.AddLocationAlt, null) },
+                                onClick = {
+                                    showAdd = false
+                                    addPinHere()
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Photo pin") },
+                                leadingIcon = { Icon(Icons.Default.PhotoCamera, null) },
+                                onClick = {
+                                    showAdd = false
+                                    takePhotoPin()
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Draw a route") },
+                                leadingIcon = { Icon(Icons.Default.Timeline, null) },
+                                onClick = {
+                                    showAdd = false
+                                    showKindPicker = true
+                                },
+                            )
+                            HorizontalDivider()
+                            DropdownMenuItem(
+                                text = { Text("Tip: long-press the map to drop a pin there", style = MaterialTheme.typography.bodySmall) },
+                                onClick = { showAdd = false },
+                            )
+                        }
+                    }
+                }
+            }
 
-                val move = pinMove
+            // ---- Bottom area: the selected pin's sheet, or the card / bar for what's in progress ----
+            val d = draft
+            val selAsset = (selected as? Selection.AssetSel)?.let { sel -> assets.firstOrNull { it.id == sel.id } }
+            val selPath = (selected as? Selection.PathSel)?.let { sel -> paths.firstOrNull { it.id == sel.id } }
+            val move = pinMove
+            // A device pin's sheet runs edge to edge; the other cards float with a margin.
+            val sheet = move == null && d == null && spot == null && selAsset != null && !selAsset.isLocation
+            Column(
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .padding(if (sheet) 0.dp else 12.dp),
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
                 when {
                     move != null -> PinMoveBar(
                         move = move,
@@ -583,29 +677,7 @@ fun MapScreen(
                         onEditRoute = { vm.editPathRoute(selPath) },
                         onClose = { vm.select(null) },
                     )
-                    else -> {
-                        SmallFloatingActionButton(onClick = { showKindPicker = true }) {
-                            Icon(Icons.Default.Timeline, "Draw path")
-                        }
-                        SmallFloatingActionButton(onClick = takePhotoPin) {
-                            Icon(Icons.Default.PhotoCamera, "Photo pin")
-                        }
-                        FloatingActionButton(onClick = {
-                            val loc = location
-                            if (loc == null) {
-                                Toast.makeText(context, "No GPS fix yet – long-press the map to place a pin manually", Toast.LENGTH_LONG).show()
-                            } else {
-                                pendingPin = PendingPin(
-                                    GeoPt(loc.latitude, loc.longitude),
-                                    if (loc.hasAccuracy()) loc.accuracy else null,
-                                    if (loc.hasAltitude()) loc.altitude else null,
-                                    fromGps = true,
-                                )
-                            }
-                        }) {
-                            Icon(Icons.Default.AddLocationAlt, "Add pin at my location")
-                        }
-                    }
+                    else -> Unit
                 }
             }
         }
@@ -1157,6 +1229,10 @@ private fun PinMoveBar(
     }
 }
 
+/**
+ * The selected pin's sheet. Half open it shows the essentials; drag its top up (or tap it) for every detail,
+ * drag down to shrink it again, and further down to close it.
+ */
 @Composable
 private fun AssetCard(
     asset: Asset,
@@ -1179,106 +1255,276 @@ private fun AssetCard(
     downlinks: List<MainViewModel.UnifiLink> = emptyList(),
     onJump: (Asset) -> Unit = {},
 ) {
-    Card(Modifier.fillMaxWidth(), elevation = CardDefaults.cardElevation(6.dp)) {
-        Column(Modifier.padding(12.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                TypeBadge(asset.type, 36.dp)
-                Spacer(Modifier.width(10.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(asset.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text("${asset.type.label} • ${asset.status}", style = MaterialTheme.typography.bodySmall)
-                }
-                IconButton(onClick = onClose) { Icon(Icons.Default.Close, "Close") }
-            }
-            // The title stays put; everything under it scrolls when the card would cover too much of the map.
+    var expanded by rememberSaveable(asset.id) { mutableStateOf(false) }
+    val screenH = androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp
+    val bodyMax by animateDpAsState(if (expanded) (screenH * 0.68f).dp else (screenH * 0.32f).dp, label = "sheet")
+    val scheme = MaterialTheme.colorScheme
+    val liveData = when (live) {
+        is MainViewModel.LiveState.Ok -> live.live
+        is MainViewModel.LiveState.Failed -> live.last
+        else -> null
+    }
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp),
+        color = scheme.surfaceContainer,
+        border = BorderStroke(1.dp, scheme.outlineVariant),
+        shadowElevation = 12.dp,
+    ) {
+        Column {
+            // Handle + title: this strip is what you drag or tap.
             Column(
                 Modifier
-                    .heightIn(max = cardBodyMaxHeight())
-                    .verticalScroll(rememberScrollState()),
+                    .fillMaxWidth()
+                    .pointerInput(expanded) {
+                        var total = 0f
+                        detectVerticalDragGestures(
+                            onDragStart = { total = 0f },
+                            onDragEnd = {
+                                when {
+                                    total < -30.dp.toPx() -> expanded = true
+                                    total > 30.dp.toPx() && expanded -> expanded = false
+                                    total > 90.dp.toPx() -> onClose()
+                                }
+                            },
+                        ) { _, dy -> total += dy }
+                    }
+                    .clickable { expanded = !expanded }
+                    .padding(start = 16.dp, end = 6.dp, top = 8.dp, bottom = 6.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Text(
-                    Geo.formatCoord(asset.latitude, asset.longitude) + (asset.accuracy?.let { "  ±${it.toInt()} m" } ?: ""),
-                    style = MaterialTheme.typography.bodySmall,
+                Box(
+                    Modifier
+                        .size(width = 38.dp, height = 4.dp)
+                        .background(scheme.outline, RoundedCornerShape(2.dp)),
                 )
-                if (location != null) {
-                    val me = GeoPt(location.latitude, location.longitude)
-                    val there = GeoPt(asset.latitude, asset.longitude)
-                    val dist = Geo.distanceMeters(me, there)
-                    val bearing = Geo.bearingDegrees(me, there)
-                    Text(
-                        "${Geo.formatDistance(dist)} ${Geo.compassPoint(bearing)} (${bearing.toInt()}°) from you",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Medium,
-                    )
+                Spacer(Modifier.height(8.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    TypeBadge(asset.type, 44.dp)
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            asset.name,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        val where = location?.let {
+                            val me = GeoPt(it.latitude, it.longitude)
+                            val there = GeoPt(asset.latitude, asset.longitude)
+                            "${Geo.formatDistance(Geo.distanceMeters(me, there))} ${Geo.compassPoint(Geo.bearingDegrees(me, there))} of you"
+                        }
+                        Text(
+                            listOfNotNull(asset.type.label.substringBefore(" /"), where).joinToString(" · "),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = scheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    IconButton(onClick = onClose) { Icon(Icons.Default.Close, "Close") }
                 }
-                Coverage.read(asset.attributes)?.let { p ->
-                    Text("Coverage: ${p.summary()}", style = MaterialTheme.typography.bodySmall)
-                }
-                if (asset.notes.isNotBlank()) {
-                    Text(asset.notes, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+            Column(
+                Modifier
+                    .heightIn(max = bodyMax)
+                    .verticalScroll(rememberScrollState())
+                    .padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    StatTile("Status", asset.status, Modifier.weight(1f))
+                    if (liveData != null) {
+                        StatTile(
+                            "UniFi",
+                            if (liveData.online) "Online" else "Offline",
+                            Modifier.weight(1f),
+                            if (liveData.online) Night.Green else Night.Red,
+                        )
+                        liveData.clients?.let { StatTile("Clients", it.toString(), Modifier.weight(1f)) }
+                    } else {
+                        StatTile("GPS fix", asset.accuracy?.let { "±${it.toInt()} m" } ?: "placed by hand", Modifier.weight(1f))
+                    }
                 }
                 photos()
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Button(
+                        onClick = onEdit,
+                        modifier = Modifier
+                            .weight(1.2f)
+                            .height(48.dp),
+                    ) { Text("Details", fontWeight = FontWeight.Bold) }
+                    if (asset.type.bssidField != null) {
+                        OutlinedButton(
+                            onClick = onSignal,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(48.dp),
+                            border = BorderStroke(1.5.dp, scheme.primary),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp),
+                        ) { Text(if (signalShowing) "Hide signal" else "Signal map", maxLines = 1) }
+                    }
+                    FilledTonalIconButton(onClick = onNavigate, modifier = Modifier.size(48.dp)) {
+                        Icon(Icons.Default.Directions, "Navigate there")
+                    }
+                    if (inLocation == null) {
+                        FilledTonalIconButton(onClick = onMove, modifier = Modifier.size(48.dp)) {
+                            Icon(Icons.Default.OpenWith, "Move pin")
+                        }
+                    }
+                }
                 if (inLocation != null) {
-                    TextButton(onClick = { onOpenLocation(inLocation) }) {
-                        Text("${AssetType.LOCATION.glyph} In ${inLocation.name} – show all devices there")
+                    // Devices move with their location; taking one out makes it a separate pin again.
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilledTonalButton(onClick = { onOpenLocation(inLocation) }) {
+                            Text("${AssetType.LOCATION.glyph} In ${inLocation.name}", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        OutlinedButton(onClick = onTakeOut) { Text("Take out") }
                     }
                 }
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilledTonalButton(onClick = onEdit) {
-                        Icon(Icons.Default.Edit, null)
-                        Spacer(Modifier.width(4.dp))
-                        Text("Details")
-                    }
-                    FilledTonalButton(onClick = onNavigate) {
-                        Icon(Icons.Default.Directions, null)
-                        Spacer(Modifier.width(4.dp))
-                        Text("Navigate")
-                    }
-                    if (inLocation != null) {
-                        // Devices move with their location; taking one out makes it a separate pin again.
-                        OutlinedButton(onClick = onTakeOut) {
-                            Icon(Icons.Default.OpenWith, null)
-                            Spacer(Modifier.width(4.dp))
-                            Text("Take out")
-                        }
-                    } else {
-                        OutlinedButton(onClick = onMove) {
-                            Icon(Icons.Default.OpenWith, null)
-                            Spacer(Modifier.width(4.dp))
-                            Text("Move")
+                if (!expanded) {
+                    Text(
+                        "Pull up for all details",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = scheme.onSurfaceVariant,
+                        modifier = Modifier.align(Alignment.CenterHorizontally),
+                    )
+                } else {
+                    HorizontalDivider(color = scheme.outlineVariant)
+                    DetailRow("Type", asset.type.label)
+                    DetailRow(
+                        "Position",
+                        Geo.formatCoord(asset.latitude, asset.longitude) + (asset.accuracy?.let { "  ±${it.toInt()} m" } ?: ""),
+                    )
+                    Coverage.read(asset.attributes)?.let { p -> DetailRow("Coverage", p.summary()) }
+                    asset.attributes.filterKeys { it !in Coverage.keys }.forEach { (k, v) -> if (v.isNotBlank()) DetailRow(k, v) }
+                    if (asset.notes.isNotBlank()) DetailRow("Notes", asset.notes)
+                    if (asset.type.bssidField != null) {
+                        TextButton(onClick = onLinkRadios, contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)) {
+                            Text(if (linkedRadios == 0) "Link a Wi-Fi radio…" else "$linkedRadios radio${if (linkedRadios == 1) "" else "s"} linked – change")
                         }
                     }
-                }
-                if (asset.type.bssidField != null) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (signalShowing) {
-                            Button(onClick = onSignal) {
-                                Icon(Icons.Default.WifiOff, null)
-                                Spacer(Modifier.width(4.dp))
-                                Text("Hide signal")
-                            }
-                        } else {
-                            FilledTonalButton(onClick = onSignal) {
-                                Icon(Icons.Default.Wifi, null)
-                                Spacer(Modifier.width(4.dp))
-                                Text("Signal map")
-                            }
-                        }
-                        TextButton(onClick = onLinkRadios) {
-                            Text(if (linkedRadios == 0) "Link radio…" else "$linkedRadios radio${if (linkedRadios == 1) "" else "s"} linked")
-                        }
+                    // Live status from UniFi when this pin matches an imported device.
+                    if (live != null) {
+                        HorizontalDivider(color = scheme.outlineVariant)
+                        UnifiLiveSection(live, onRefreshLive, uplink, downlinks, onJump)
                     }
                 }
-                // Live status from the UniFi controller when this pin matches an imported device.
-                if (live != null) UnifiLiveSection(live, onRefreshLive, uplink, downlinks, onJump)
             }
         }
     }
 }
 
-/** Tallest the scrolling part of a pin card may be: about 45% of the screen, so the map stays usable above it. */
 @Composable
-private fun cardBodyMaxHeight() = (androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp * 0.45f).dp
+private fun StatTile(label: String, value: String, modifier: Modifier = Modifier, valueColor: Color = Color.Unspecified) {
+    Column(
+        modifier
+            .background(MaterialTheme.colorScheme.surfaceContainerHighest, RoundedCornerShape(12.dp))
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+    ) {
+        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(
+            value,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = valueColor,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/** One "label: value" line in the opened sheet. */
+@Composable
+private fun DetailRow(label: String, value: String) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(
+            label,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(0.38f),
+        )
+        Text(value, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(0.62f))
+    }
+}
+
+/** The site switcher in the top strip. */
+@Composable
+private fun SitePill(name: String, subtitle: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Surface(
+        onClick = onClick,
+        modifier = modifier.height(46.dp),
+        shape = RoundedCornerShape(23.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Row(Modifier.padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier
+                    .size(10.dp)
+                    .background(Night.Green, CircleShape),
+            )
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(name, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(subtitle, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+            }
+            Icon(Icons.Default.ArrowDropDown, "Switch site", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun SurveyChip(text: String, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(8.dp),
+        color = MaterialTheme.colorScheme.errorContainer,
+        border = BorderStroke(1.dp, Night.Red),
+    ) {
+        Row(Modifier.padding(horizontal = 10.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier
+                    .size(8.dp)
+                    .background(Night.Red, CircleShape),
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(text, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onErrorContainer, maxLines = 1)
+        }
+    }
+}
+
+/** A square button in the map's right-hand tool rail. */
+@Composable
+private fun RailButton(icon: ImageVector, label: String, active: Boolean = false, accent: Boolean = false, onClick: () -> Unit) {
+    val scheme = MaterialTheme.colorScheme
+    Surface(
+        onClick = onClick,
+        modifier = Modifier.size(52.dp),
+        shape = RoundedCornerShape(14.dp),
+        color = if (accent) scheme.primary else scheme.surfaceContainer,
+        border = BorderStroke(1.dp, if (active || accent) scheme.primary else scheme.outlineVariant),
+        shadowElevation = 4.dp,
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(icon, label, tint = if (accent) scheme.onPrimary else if (active) scheme.primary else scheme.onSurface)
+        }
+    }
+}
+
+@Composable
+private fun TabItem(icon: ImageVector, label: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+    Column(
+        modifier.clickable(onClick = onClick),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Icon(icon, null, tint = tint)
+        Text(label, style = MaterialTheme.typography.labelSmall, color = tint, fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium)
+    }
+}
 
 /** A closet / rack holding several devices, shown as one pin. */
 @Composable
@@ -1544,6 +1790,7 @@ private fun LayersDialog(
                 CheckRow("   Signal dots", settings.showHeatDots) { onChange(settings.copy(showHeatDots = it)) }
                 CheckRow("   Smooth average colour", settings.showHeatSurface) { onChange(settings.copy(showHeatSurface = it)) }
                 CheckRow("AP coverage patterns", settings.showPatterns) { onChange(settings.copy(showPatterns = it)) }
+                CheckRow("Dark street map", settings.darkMap) { onChange(settings.copy(darkMap = it)) }
                 HorizontalDivider(Modifier.padding(vertical = 6.dp))
                 Text("Pin types", style = MaterialTheme.typography.titleSmall)
                 AssetType.entries.forEach { t ->

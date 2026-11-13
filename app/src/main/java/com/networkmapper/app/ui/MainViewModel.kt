@@ -82,6 +82,8 @@ data class MapSettings(
     val showHeatDots: Boolean = true,
     /** Pin names under the pins once zoomed in. */
     val showPinNames: Boolean = true,
+    /** Street and topographic maps drawn in dark colours. */
+    val darkMap: Boolean = true,
     val tileStyle: TileStyle = TileStyle.STREET,
     val hiddenTypes: Set<AssetType> = emptySet(),
 )
@@ -628,6 +630,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 showHeatSurface = mapPrefs.getBoolean("heatSurface", d.showHeatSurface),
                 showHeatDots = mapPrefs.getBoolean("heatDots", d.showHeatDots),
                 showPinNames = mapPrefs.getBoolean("pinNames", d.showPinNames),
+                darkMap = mapPrefs.getBoolean("darkMap", d.darkMap),
                 tileStyle = TileStyle.entries.firstOrNull { it.name == mapPrefs.getString("tiles", null) } ?: d.tileStyle,
                 hiddenTypes = mapPrefs.getStringSet("hiddenTypes", emptySet()).orEmpty()
                     .mapNotNull { n -> AssetType.entries.firstOrNull { it.name == n } }.toSet(),
@@ -645,6 +648,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             .putBoolean("heatSurface", s.showHeatSurface)
             .putBoolean("heatDots", s.showHeatDots)
             .putBoolean("pinNames", s.showPinNames)
+            .putBoolean("darkMap", s.darkMap)
             .putString("tiles", s.tileStyle.name)
             .putStringSet("hiddenTypes", s.hiddenTypes.map { it.name }.toSet())
             .apply()

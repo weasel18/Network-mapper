@@ -44,7 +44,9 @@ import com.networkmapper.app.ui.wifi.WifiScreen
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        // The app is always dark, so the system bars always get light icons.
+        val bars = androidx.activity.SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+        enableEdgeToEdge(statusBarStyle = bars, navigationBarStyle = bars)
         setContent {
             NetworkMapperTheme {
                 AppRoot()

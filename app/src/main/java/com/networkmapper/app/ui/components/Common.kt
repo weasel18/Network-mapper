@@ -72,9 +72,9 @@ fun TypeBadge(type: AssetType, size: Dp = 32.dp) {
     Box(
         modifier = Modifier
             .size(size)
-            .clip(CircleShape)
+            .clip(RoundedCornerShape(percent = 28))
             .background(Color(type.colorArgb))
-            .border(2.dp, Color.White, CircleShape),
+            .border(1.dp, Color(0x55FFFFFF), RoundedCornerShape(percent = 28)),
         contentAlignment = Alignment.Center,
     ) {
         if (type == AssetType.ACCESS_POINT) {

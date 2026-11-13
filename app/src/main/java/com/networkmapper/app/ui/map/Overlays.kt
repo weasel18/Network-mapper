@@ -126,10 +126,23 @@ class MapOverlayController(private val context: Context, val mapView: MapView) {
         }
     }
 
-    fun setTileStyle(style: TileStyle) {
-        if (style == currentTiles) return
-        currentTiles = style
-        mapView.setTileSource(TileSources.forStyle(style))
+    private var currentNight: Boolean? = null
+
+    /** Street and topographic tiles can be drawn dark (lightness flipped, colours kept); satellite is left as it is. */
+    fun setTileStyle(style: TileStyle, dark: Boolean) {
+        if (style != currentTiles) {
+            currentTiles = style
+            mapView.setTileSource(TileSources.forStyle(style))
+        }
+        val night = dark && (style == TileStyle.STREET || style == TileStyle.TOPO)
+        if (night != currentNight) {
+            currentNight = night
+            val tiles = mapView.overlayManager.tilesOverlay
+            tiles.setColorFilter(if (night) NIGHT_FILTER else null)
+            tiles.loadingBackgroundColor = if (night) 0xFF0F151C.toInt() else 0xFFD8D8D8.toInt()
+            tiles.loadingLineColor = if (night) 0xFF1A232E.toInt() else 0xFFC8C8C8.toInt()
+            mapView.invalidate()
+        }
     }
 
     fun setLocation(location: Location?) {
@@ -340,16 +353,16 @@ class MapOverlayController(private val context: Context, val mapView: MapView) {
         val top = halo
         val p = Paint(Paint.ANTI_ALIAS_FLAG)
         if (selected) {
-            p.color = 0x88FFEB3B.toInt()
+            p.color = 0xFFFFB547.toInt()
             c.drawRoundRect(left - halo, top - halo, left + bodyW + halo, top + bodyH + halo, bodyH / 2 + halo, bodyH / 2 + halo, p)
         }
         p.color = 0x55000000
         c.drawRoundRect(left, top + 1.5f * d, left + bodyW, top + bodyH + 1.5f * d, bodyH / 2, bodyH / 2, p)
-        p.color = 0xFFFFFFFF.toInt()
+        p.color = 0xFF0F151C.toInt()
         c.drawRoundRect(left, top, left + bodyW, top + bodyH, bodyH / 2, bodyH / 2, p)
         p.style = Paint.Style.STROKE
-        p.strokeWidth = 2f * d
-        p.color = AssetType.LOCATION.colorArgb.toInt()
+        p.strokeWidth = 1.5f * d
+        p.color = 0xFF8A9AAB.toInt()
         c.drawRoundRect(left + d, top + d, left + bodyW - d, top + bodyH - d, bodyH / 2 - d, bodyH / 2 - d, p)
         p.style = Paint.Style.FILL
         var x = left + pad
@@ -378,10 +391,10 @@ class MapOverlayController(private val context: Context, val mapView: MapView) {
         val ly = labelTop - labelPaint.ascent()
         labelPaint.style = Paint.Style.STROKE
         labelPaint.strokeWidth = 3f * d
-        labelPaint.color = 0xFFFFFFFF.toInt()
+        labelPaint.color = 0xFF0F151C.toInt()
         c.drawText(label, w / 2f, ly, labelPaint)
         labelPaint.style = Paint.Style.FILL
-        labelPaint.color = 0xFF263238.toInt()
+        labelPaint.color = 0xFFEEF2F6.toInt()
         c.drawText(label, w / 2f, ly, labelPaint)
         return BitmapDrawable(context.resources, bmp) to (top + bodyH / 2) / h
     }
@@ -396,15 +409,17 @@ class MapOverlayController(private val context: Context, val mapView: MapView) {
         val c = Canvas(bmp)
         val r = size / 2f
         val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        // A rounded square with a dark rim (and an amber ring when selected).
+        fun square(half: Float) = c.drawRoundRect(r - half, r - half, r + half, r + half, half * 0.56f, half * 0.56f, paint)
         if (selected) {
-            paint.color = 0x55FFEB3B
-            c.drawCircle(r, r, r, paint)
+            paint.color = 0xFFFFB547.toInt()
+            square(r)
         }
         val inner = if (selected) r * 0.75f else r - density
-        paint.color = 0xFFFFFFFF.toInt()
-        c.drawCircle(r, r, inner, paint)
+        paint.color = 0xFF0F151C.toInt()
+        square(if (selected) r - 3f * density else inner)
         paint.color = type.colorArgb.toInt()
-        c.drawCircle(r, r, inner - 2.5f * density, paint)
+        square(inner - 2.5f * density)
         paint.color = 0xFFFFFFFF.toInt()
         if (type == AssetType.ACCESS_POINT) {
             WifiGlyph.draw(c, r, r, inner * 1.15f, 0xFFFFFFFF.toInt())
@@ -450,13 +465,13 @@ class PinLabelOverlay(private val density: Float) : Overlay() {
             if (used.any { android.graphics.RectF.intersects(it, box) }) continue
             used.add(box)
             val y = top - paint.ascent()
-            // White halo so the name reads on any map.
+            // Light text with a dark halo reads on the dark map and on satellite imagery.
             paint.style = Paint.Style.STROKE
             paint.strokeWidth = 3f * density
-            paint.color = 0xFFFFFFFF.toInt()
+            paint.color = 0xFF0F151C.toInt()
             c.drawText(label, pt.x.toFloat(), y, paint)
             paint.style = Paint.Style.FILL
-            paint.color = 0xFF263238.toInt()
+            paint.color = 0xFFEEF2F6.toInt()
             c.drawText(label, pt.x.toFloat(), y, paint)
         }
     }
@@ -465,6 +480,19 @@ class PinLabelOverlay(private val density: Float) : Overlay() {
         const val MIN_ZOOM = 17.5
     }
 }
+
+/**
+ * Flips the lightness of map tiles and keeps their hues (white paper becomes the app's dark background):
+ * out = 0.86 * (255 + channel - 2 * luminance) + background.
+ */
+private val NIGHT_FILTER = android.graphics.ColorMatrixColorFilter(
+    floatArrayOf(
+        0.86f * (1f - 0.426f), 0.86f * -1.43f, 0.86f * -0.144f, 0f, 0.86f * 255f + 15f,
+        0.86f * -0.426f, 0.86f * (1f - 1.43f), 0.86f * -0.144f, 0f, 0.86f * 255f + 21f,
+        0.86f * -0.426f, 0.86f * -1.43f, 0.86f * (1f - 0.144f), 0f, 0.86f * 255f + 28f,
+        0f, 0f, 0f, 1f, 0f,
+    ),
+)
 
 /** Notices when the user drags the map (to cancel follow-me mode) without consuming the event. */
 class TouchWatcherOverlay(private val density: Float, private val onPan: () -> Unit) : Overlay() {
