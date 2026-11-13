@@ -133,7 +133,8 @@ internal fun fillFromAp(
     isDefaultName: (AssetType, String) -> Boolean,
 ): AssetForm {
     val attrs = LinkedHashMap(form.attributes)
-    attrs[bssidField] = radios.map { it.bssid }.distinct().sorted().joinToString(", ")
+    // Radios already on the pin are kept: an AP with more BSSIDs than were grouped automatically gets them added one by one.
+    attrs[bssidField] = (Wifi.parseBssids(attrs[bssidField] ?: "") + radios.map { it.bssid }).sorted().joinToString(", ")
     val fields = form.type.suggestedFields
     val ssids = radios.map { it.ssid }.filter { it.isNotBlank() }.distinct()
     if ("SSID" in fields && ssids.isNotEmpty()) attrs["SSID"] = ssids.joinToString(", ")

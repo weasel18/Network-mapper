@@ -1117,6 +1117,40 @@ async function openDevices() {
 
 // ---------------------------------------------------------------- heatmap
 
+/**
+ * One reading per spot for the "strongest signal" heatmap (same rule as the phones).
+ * Surveys hold full scans (every AP in range) and, in between, readings of just the AP the phone was connected to.
+ * A phone clings to an AP after a nearer one is stronger, so a spot with only the connected AP's reading takes the best
+ * signal of the nearest full scan within 15 m; with no scan that close it is left out instead of shown as weak.
+ */
+function strongestPerSpot(readings) {
+  const NEAR = 15, spots = new Map();
+  for (const r of readings) {
+    const k = `${Math.round(r.lat * 1e5)}:${Math.round(r.lon * 1e5)}`, s = spots.get(k);
+    if (!s) spots.set(k, { best: r, scan: r.conn ? null : r });
+    else { if (r.rssi > s.best.rssi) s.best = r; if (!r.conn && (!s.scan || r.rssi > s.scan.rssi)) s.scan = r; }
+  }
+  const all = [...spots.values()], scanned = all.filter((s) => s.scan);
+  if (!scanned.length) return all.map((s) => s.best); // older surveys without scans everywhere: shown as they are
+  const mLat = 111320, mLon = mLat * Math.max(0.01, Math.cos((readings[0].lat * Math.PI) / 180));
+  const cell = (r) => [Math.floor((r.lat * mLat) / NEAR), Math.floor((r.lon * mLon) / NEAR)];
+  const grid = new Map();
+  scanned.forEach((s) => { const k = cell(s.best).join(":"); grid.set(k, [...(grid.get(k) || []), s]); });
+  const out = [];
+  for (const s of all) {
+    if (s.scan) { out.push(s.best); continue; }
+    const [cx, cy] = cell(s.best);
+    let near = null, nearM = NEAR;
+    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (const o of grid.get(`${cx + dx}:${cy + dy}`) || []) {
+      const m = Math.hypot((o.best.lat - s.best.lat) * mLat, (o.best.lon - s.best.lon) * mLon);
+      if (m <= nearM) { nearM = m; near = o; }
+    }
+    if (!near) continue;
+    out.push(near.scan.rssi > s.best.rssi ? { ...s.best, rssi: near.scan.rssi, bssid: near.scan.bssid, ssid: near.scan.ssid, freq: near.scan.freq } : s.best);
+  }
+  return out;
+}
+
 async function refreshHeat() {
   layers.heat.clearLayers();
   layers.surface.setPoints([]);
@@ -1138,7 +1172,7 @@ async function refreshHeat() {
     subset = readings.filter((r) => macs.has(String(r.bssid).toLowerCase()));
   } else subset = readings.filter((r) => r.bssid === v);
   const spots = new Map();
-  for (const r of subset) {
+  for (const r of v === "*" ? strongestPerSpot(subset) : subset) {
     const k = `${Math.round(r.lat * 1e5)}:${Math.round(r.lon * 1e5)}`;
     const old = spots.get(k);
     if (!old || r.rssi > old.rssi) spots.set(k, r);

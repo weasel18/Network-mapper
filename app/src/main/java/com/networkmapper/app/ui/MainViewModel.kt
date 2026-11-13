@@ -1365,12 +1365,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             is HeatFilter.Bssid -> readings.filter { it.bssid == filter.bssid }
             is HeatFilter.Device -> readings.filter { it.bssid in filter.bssids }
         }
-        // Collapse samples taken at the same spot (~1 m grid) to the strongest one.
-        return subset
-            .groupBy { Math.round(it.latitude * 1e5) to Math.round(it.longitude * 1e5) }
-            .values
-            .map { group -> group.maxBy { it.rssi } }
-            .map { HeatPoint(it.latitude, it.longitude, it.rssi, it.bssid, it.ssid, it.timestamp) }
+        val spots = when (filter) {
+            // "Strongest" means the best AP heard around each spot, not the one the phone was clinging to.
+            HeatFilter.Strongest, is HeatFilter.Ssid -> HeatCalc.strongestPerSpot(subset)
+            // One AP / device: its own strongest sample at each spot (~1 m grid).
+            else -> subset
+                .groupBy { Math.round(it.latitude * 1e5) to Math.round(it.longitude * 1e5) }
+                .values
+                .map { group -> group.maxBy { it.rssi } }
+        }
+        return spots.map { HeatPoint(it.latitude, it.longitude, it.rssi, it.bssid, it.ssid, it.timestamp) }
     }
 
     fun showHeatmapFor(filter: HeatFilter) {

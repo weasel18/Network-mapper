@@ -60,7 +60,7 @@ fun ApFillSection(
                     Text("Fill from Wi-Fi", fontWeight = FontWeight.SemiBold)
                     Text(
                         if (linkedCount > 0) {
-                            "$linkedCount radio(s) linked. Pick another to replace them."
+                            "$linkedCount radio(s) linked. Pick another to add its radios too (edit the MAC / BSSID field below to remove one), then Save."
                         } else {
                             "Tap an AP to fill in its MAC / BSSID, SSID, channel and saved name."
                         },

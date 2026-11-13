@@ -76,8 +76,9 @@ fun LinkRadiosDialog(vm: MainViewModel, asset: Asset, onDismiss: () -> Unit) {
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                    "Pick this device's BSSID(s). Networks heard closest to the pin are listed first; " +
-                        "ticking one also ticks the same AP's other SSIDs and bands (matched by MAC and survey signal).",
+                    "Tick every BSSID that belongs to this device, then Save (Cancel or tapping outside keeps the old list). " +
+                        "Networks heard closest to the pin are listed first; ticking one also ticks the same AP's other " +
+                        "SSIDs and bands (matched by MAC and survey signal).",
                     style = MaterialTheme.typography.bodySmall,
                 )
                 val list = candidates
@@ -137,7 +138,7 @@ fun LinkRadiosDialog(vm: MainViewModel, asset: Asset, onDismiss: () -> Unit) {
                     onDismiss()
                 },
                 enabled = all.isNotEmpty() || vm.linkedBssids(asset).isNotEmpty(),
-            ) { Text(if (all.isEmpty()) "Unlink" else "Show signal map") }
+            ) { Text(if (all.isEmpty()) "Unlink all" else "Save ${all.size} radio${if (all.size == 1) "" else "s"}") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
